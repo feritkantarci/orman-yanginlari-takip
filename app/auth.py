@@ -27,6 +27,7 @@ def check_login(username, password):
     return None
 
 def login_form():
+    print("--- LOGIN FORM REACHED ---", flush=True)
     st.markdown("<h1 style='text-align: center;'>🌲 Orman Yangınları<br>Takip Sistemi</h1>", unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center;'>Kullanıcı Girişi</h3>", unsafe_allow_html=True)
     

@@ -58,6 +58,21 @@ def update_db():
     except sqlite3.IntegrityError:
         print("ahmet user already exists.")
 
+    # 5. Create requests table for approval workflow
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        intervention_id INTEGER,
+        request_type TEXT NOT NULL,
+        new_data TEXT,
+        status TEXT DEFAULT 'PENDING',
+        requested_by TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(intervention_id) REFERENCES interventions(id)
+    )
+    ''')
+    print("Checked/Created requests table.")
+
     conn.commit()
     conn.close()
     print("Database update complete.")

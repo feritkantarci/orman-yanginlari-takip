@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
+import json
 import sqlite3
 import os
-import json
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from auth import login_form, logout_button, hash_password
 
 # Database Path
@@ -112,9 +111,16 @@ else:
 st.title(f"🌲 Ormanlık Alan Hat Bakım Takip Sistemi (Hoşgeldin, {username})")
 
 # Define Dialog for Data Entry
-@st.dialog("Tespit/Müdahale Girişi (Bire-Çok Kayıt)", width="large")
-def open_data_entry_dialog(sira_no, hat_ismi, siparis="", planlanan="", gerceklesen=""):
-    st.markdown(f"**Hat İsmi:** {hat_ismi} (Sıra No: {sira_no})")
+@st.dialog("Veri Girişi ve Geçmiş Kayıtlar", width="large")
+def open_data_entry_dialog(sira_no, hat_ismi, siparis="", planlanan="", gerceklesen="", il=""):
+    st.markdown(f"### 📍 {il} - {hat_ismi}")
+    st.markdown(f"**Sıra No:** {sira_no}")
+    
+    if st.session_state.get('clear_next'):
+        st.session_state.entry_asset_id = ""
+        st.session_state.entry_desc = ""
+        st.session_state.entry_len = ""
+        st.session_state.clear_next = False
     
     with st.expander("📍 Hat Bilgilerini Güncelle (Sipariş / Bakım Tarihleri)", expanded=True):
         c1, c2, c3 = st.columns(3)
@@ -187,9 +193,7 @@ def open_data_entry_dialog(sira_no, hat_ismi, siparis="", planlanan="", gercekle
             )
             conn.commit()
             conn.close()
-            st.session_state.entry_asset_id = ""
-            st.session_state.entry_desc = ""
-            st.session_state.entry_len = ""
+            st.session_state.clear_next = True
             st.success(f"Asset ID: {asset_id} başarıyla eklendi!")
             st.rerun()
             
@@ -243,8 +247,10 @@ def open_data_entry_dialog(sira_no, hat_ismi, siparis="", planlanan="", gercekle
 # Tabs
 tab1, tab2, tab3 = st.tabs(["📋 Hat Listesi ve Veri Girişi", "📊 Genel Özet", "🔒 Admin Paneli"])
 
-with tab1:
-    st.markdown("### Veri girişi yapmak istediğiniz satırı (Sıra No) seçin:")
+with tab1:    
+    st.sidebar.markdown(f"**👤 Giriş Yapan:** {username} ({user_role})")
+    
+    st.sidebar.divider()
     
     df_lines = load_lines()
     if not df_lines.empty:
@@ -284,41 +290,78 @@ with tab1:
         st.info("💡 İpucu: Soldaki menüden filtreleme yapın. Ardından aşağıdaki tabloda herhangi bir satıra **TIKLAYARAK** veri giriş penceresini açabilirsiniz.")
         st.write(f"Filtrelenen Hat Sayısı: **{len(df_filtered)}** (Ekranda en fazla 1000 satır gösterilir)")
         
-        # We use AgGrid for a rock-solid, crash-proof interactive table with row selection
-        display_df = df_filtered.head(1000)
+        # --- DYNAMIC SUMMARY COLUMNS START ---
+        df_filtered = df_filtered.copy()
+        conn = get_connection()
+        summary_df = pd.read_sql("SELECT sira_no, category, status FROM interventions", conn)
+        conn.close()
+
+        if not summary_df.empty:
+            summary_df['sira_no'] = pd.to_numeric(summary_df['sira_no'], errors='coerce')
+            categories = ["Ağaç Budama", "Güzergah Değişimi", "Beton Dökümü", "Koridor Açma", "Operasyon Müdahalesi"]
+            
+            for cat in categories:
+                cat_df = summary_df[summary_df['category'] == cat]
+                
+                if not cat_df.empty:
+                    status_counts = cat_df.groupby(['sira_no', 'status']).size().unstack(fill_value=0)
+                    
+                    yapilmadi_s = status_counts['Yapılmadı'] if 'Yapılmadı' in status_counts.columns else pd.Series(0, index=status_counts.index)
+                    yapildi_s = status_counts['Yapıldı'] if 'Yapıldı' in status_counts.columns else pd.Series(0, index=status_counts.index)
+                    
+                    # Combine into a single string series
+                    # Format: "X ok - Y nok" (if total > 0, else just "-")
+                    yapilmadi_mapped = df_filtered['Sıra No'].map(yapilmadi_s).fillna(0).astype(int)
+                    yapildi_mapped = df_filtered['Sıra No'].map(yapildi_s).fillna(0).astype(int)
+                    
+                    combined_str = []
+                    for y_ok, y_nok in zip(yapildi_mapped, yapilmadi_mapped):
+                        if y_ok == 0 and y_nok == 0:
+                            combined_str.append("-")
+                        else:
+                            combined_str.append(f"{y_ok} ok - {y_nok} nok")
+                            
+                    df_filtered[cat] = combined_str
+                else:
+                    df_filtered[cat] = "-"
+        else:
+            categories = ["Ağaç Budama", "Güzergah Değişimi", "Beton Dökümü", "Koridor Açma", "Operasyon Müdahalesi"]
+            for cat in categories:
+                df_filtered[cat] = "-"
+        # --- DYNAMIC SUMMARY COLUMNS END ---
+        
+        from io import StringIO
+        display_df = df_filtered.head(1000).astype(str)
+        # ⚠️ CRITICAL BUGFIX: Serialize to JSON and back to destroy all pandas C-level memory strides
+        # This completely prevents PyArrow C++ segmentation faults on Apple Silicon
+        json_str = display_df.to_json(orient='records')
+        display_df = pd.read_json(StringIO(json_str), orient='records')
+        for col in display_df.columns:
+            display_df[col] = display_df[col].astype(str)
         
         st.write("👇 **Aşağıdaki tablodan işlem yapmak istediğiniz satırın herhangi bir yerine tıklayın:**")
         
-        gb = GridOptionsBuilder.from_dataframe(display_df)
-        # Checkbox'ı kaldırıyoruz. Satırın herhangi bir yerine tıklamak seçecektir.
-        gb.configure_selection(selection_mode="single", use_checkbox=False)
-        gridOptions = gb.build()
-
-        grid_response = AgGrid(
-            display_df.astype(str), 
-            gridOptions=gridOptions, 
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
-            height=450,
-            theme='streamlit'
+        event = st.dataframe(
+            display_df,
+            on_select="rerun",
+            selection_mode="single-row",
+            use_container_width=True,
+            hide_index=True
         )
         
-        selected_rows = grid_response['selected_rows']
+        selected_rows = event.selection.rows
         
-        if selected_rows is not None:
-            if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
-                sira_no = int(selected_rows.iloc[0]['Sıra No'])
-                hat_ismi = str(selected_rows.iloc[0]['Hat İsmi'])
-                siparis = str(selected_rows.iloc[0]['SİPARİŞ NUMARASI'])
-                planlanan = str(selected_rows.iloc[0]['Planlanan Bakım Tarihi'])
-                gerceklesen = str(selected_rows.iloc[0]['Gerçekleşen Bakım Tarihi'])
-                open_data_entry_dialog(sira_no, hat_ismi, siparis, planlanan, gerceklesen)
-            elif isinstance(selected_rows, list) and len(selected_rows) > 0:
-                sira_no = int(selected_rows[0]['Sıra No'])
-                hat_ismi = str(selected_rows[0]['Hat İsmi'])
-                siparis = str(selected_rows[0].get('SİPARİŞ NUMARASI', ''))
-                planlanan = str(selected_rows[0].get('Planlanan Bakım Tarihi', ''))
-                gerceklesen = str(selected_rows[0].get('Gerçekleşen Bakım Tarihi', ''))
-                open_data_entry_dialog(sira_no, hat_ismi, siparis, planlanan, gerceklesen)
+        if selected_rows:
+            selected_idx = selected_rows[0]
+            row_data = display_df.iloc[selected_idx]
+            sira_no = int(row_data['Sıra No'])
+            hat_ismi = str(row_data['Hat İsmi'])
+            siparis = str(row_data.get('SİPARİŞ NUMARASI', ''))
+            planlanan = str(row_data.get('Planlanan Bakım Tarihi', ''))
+            gerceklesen = str(row_data.get('Gerçekleşen Bakım Tarihi', ''))
+            il = str(row_data.get('İl', ''))
+            
+            open_data_entry_dialog(sira_no, hat_ismi, siparis, planlanan, gerceklesen, il)
                 
         st.divider()
         st.info("Eğer geçmiş kayıtları görmek isterseniz bir satır seçmeniz yeterlidir.")
@@ -339,6 +382,7 @@ with tab2:
             df_lines_full[['Sıra No', 'İl', 'Operasyon Merkezi']], 
             left_on='sira_no', right_on='Sıra No', how='left'
         )
+        all_interventions = all_interventions.astype(str)
     else:
         all_interventions = all_interventions_raw.copy()
         if not all_interventions.empty:
@@ -394,35 +438,33 @@ with tab2:
         st.subheader("Tüm Tespit Dökümü")
         st.write("👇 Tablodan bir kayıt seçerek hemen altından Düzenleme veya Silme işlemi yapabilirsiniz.")
         
-        gb_all = GridOptionsBuilder.from_dataframe(all_interventions)
-        gb_all.configure_selection(selection_mode="single", use_checkbox=False)
-        gridOptions_all = gb_all.build()
-
-        grid_resp_all = AgGrid(
-            all_interventions.astype(str), 
-            gridOptions=gridOptions_all, 
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
-            height=400,
-            theme='streamlit',
-            key='all_interventions_grid'
+        from io import StringIO
+        all_interventions_str = all_interventions.astype(str)
+        json_str_all = all_interventions_str.to_json(orient='records')
+        all_interventions_str = pd.read_json(StringIO(json_str_all), orient='records')
+        for col in all_interventions_str.columns:
+            all_interventions_str[col] = all_interventions_str[col].astype(str)
+            
+        event_all = st.dataframe(
+            all_interventions_str,
+            on_select="rerun",
+            selection_mode="single-row",
+            use_container_width=True,
+            hide_index=True
         )
         
-        sel_all = grid_resp_all['selected_rows']
-        if sel_all is not None:
-            if isinstance(sel_all, pd.DataFrame) and not sel_all.empty:
-                row_all = sel_all.iloc[0]
-            elif isinstance(sel_all, list) and len(sel_all) > 0:
-                row_all = sel_all[0]
-            else:
-                row_all = None
-                
+        selected_rows_all = event_all.selection.rows
+        if selected_rows_all:
+            row_idx = selected_rows_all[0]
+            row_all = all_interventions.iloc[row_idx]
+            
             if row_all is not None:
                 r_id = int(row_all['id'])
                 r_creator = str(row_all.get('created_by', 'bilinmeyen'))
                 
                 st.markdown(f"**Seçili Kayıt:** Asset ID {row_all['asset_id']} - {row_all['category']} (Giren: {r_creator})")
                 
-                if user_role == 'admin' or r_creator == username:
+                if user_role == 'admin':
                     c1, c2, c3 = st.columns([1,1,4])
                     if c1.button("✏️ Düzenle", key=f"edit_all_{r_id}"):
                         st.session_state[f"show_edit_all_{r_id}"] = not st.session_state.get(f"show_edit_all_{r_id}", False)
@@ -470,8 +512,60 @@ with tab2:
                                 st.session_state[f"show_edit_all_{r_id}"] = False
                                 st.success("Kayıt güncellendi!")
                                 st.rerun()
+                elif r_creator == username:
+                    c1, c2, c3 = st.columns([1,1,4])
+                    if c1.button("✏️ Düzenleme Talebi", key=f"edit_req_{r_id}"):
+                        st.session_state[f"show_edit_all_{r_id}"] = not st.session_state.get(f"show_edit_all_{r_id}", False)
+                    if c2.button("🗑️ Silme Talebi", key=f"del_req_{r_id}"):
+                        conn = get_connection()
+                        conn.execute("INSERT INTO requests (intervention_id, request_type, requested_by) VALUES (?, ?, ?)", (r_id, 'DELETE', username))
+                        conn.commit()
+                        conn.close()
+                        st.success("Silme talebiniz Admin onayına gönderildi.")
+                        
+                    if st.session_state.get(f"show_edit_all_{r_id}", False):
+                        with st.form(f"edit_form_all_{r_id}"):
+                            e_asset = st.text_input("Asset ID", value=str(row_all.get('asset_id', '')))
+                            cats = ["Ağaç Budama", "Güzergah Değişimi", "Beton Dökümü", "Koridor Açma", "Operasyon Müdahalesi"]
+                            cat_val = str(row_all.get('category', ''))
+                            e_cat = st.selectbox("Kategori", cats, index=cats.index(cat_val) if cat_val in cats else 0)
+                            stats = ["Yapılmadı", "Yapıldı", "Bekliyor"]
+                            stat_val = str(row_all.get('status', ''))
+                            e_status = st.selectbox("Durum", stats, index=stats.index(stat_val) if stat_val in stats else 0)
+                            
+                            e_len = str(row_all.get('length_km', ''))
+                            if e_cat == "Koridor Açma":
+                                e_len_input = st.text_input("Uzunluk (km)", value=e_len if e_len != "nan" else "")
+                            
+                            desc_val = str(row_all.get('description', ''))
+                            e_desc = st.text_area("Açıklama", value=desc_val if desc_val != "nan" else "")
+                            
+                            if st.form_submit_button("Talebi Gönder"):
+                                final_len = None
+                                if e_cat == "Koridor Açma":
+                                    try:
+                                        final_len = float(e_len_input.replace(',', '.'))
+                                    except:
+                                        st.error("Geçerli bir km giriniz.")
+                                        st.stop()
+                                
+                                new_data_dict = {
+                                    "asset_id": e_asset,
+                                    "category": e_cat,
+                                    "status": e_status,
+                                    "length_km": final_len,
+                                    "description": e_desc
+                                }
+                                new_data_json = json.dumps(new_data_dict)
+                                
+                                conn = get_connection()
+                                conn.execute("INSERT INTO requests (intervention_id, request_type, new_data, requested_by) VALUES (?, ?, ?, ?)", (r_id, 'EDIT', new_data_json, username))
+                                conn.commit()
+                                conn.close()
+                                st.session_state[f"show_edit_all_{r_id}"] = False
+                                st.success("Düzenleme talebiniz Admin onayına gönderildi.")
                 else:
-                    st.info("Bu kayıt başkası tarafından girildiği için doğrudan silemez/düzenleyemezsiniz. Talep göndermek için 1. Sekmedeki hat detayını kullanınız.")
+                    st.info("Bu kayıt başkası tarafından girildiği için silemez veya düzenleyemezsiniz.")
         
         st.divider()
         st.subheader("📥 Raporları Excel'e Aktar")
@@ -531,68 +625,87 @@ with tab3:
                         conn.close()
                         
         st.divider()
-        st.subheader("2. Silinme / Değişiklik Talepleri")
+        st.subheader("2. Onay Bekleyen Silme / Değişiklik Talepleri")
         conn = get_connection()
-        flagged = pd.read_sql("SELECT id, created_by, asset_id, category, flag_request, status, length_km, description FROM interventions WHERE flag_request IS NOT NULL", conn)
+        
+        query = """
+            SELECT r.id as req_id, r.request_type, r.new_data, r.requested_by, r.created_at,
+                   i.id as intervention_id, i.asset_id, i.category, i.status, i.length_km, i.description
+            FROM requests r
+            JOIN interventions i ON r.intervention_id = i.id
+            WHERE r.status = 'PENDING'
+        """
+        reqs_df = pd.read_sql(query, conn)
         conn.close()
         
-        if not flagged.empty:
-            for idx, row in flagged.iterrows():
-                rec_id = row['id']
+        if not reqs_df.empty:
+            for idx, row in reqs_df.iterrows():
+                req_id = row['req_id']
+                req_type = row['request_type']
+                int_id = row['intervention_id']
+                
                 with st.container():
-                    fc1, fc2, fc3, fc4, fc5 = st.columns([2, 3, 2, 1, 1])
-                    fc1.write(f"**Asset:** {row['asset_id']}")
-                    fc2.write(f"**Talep:** {row['flag_request']}")
-                    fc3.caption(f"Sahibi: {row['created_by']}")
+                    st.markdown(f"**Talep ID:** {req_id} | **Kullanıcı:** {row['requested_by']} | **İşlem Tipi:** {'🗑️ Silme' if req_type == 'DELETE' else '✏️ Düzenleme'}")
                     
-                    if fc4.button("Düzenle", key=f"admin_edit_btn_{rec_id}"):
-                        st.session_state[f"admin_edit_{rec_id}"] = not st.session_state.get(f"admin_edit_{rec_id}", False)
+                    if req_type == 'DELETE':
+                        st.info(f"Kullanıcı {row['requested_by']}, Asset ID **{row['asset_id']}** olan kaydı (Kategori: {row['category']}) silmek istiyor.")
+                    elif req_type == 'EDIT':
+                        st.info(f"Kullanıcı {row['requested_by']}, Asset ID **{row['asset_id']}** olan kaydı düzenlemek istiyor.")
                         
-                    if fc5.button("🗑️ Sil", key=f"admin_del_{rec_id}"):
+                        try:
+                            new_data = json.loads(row['new_data'])
+                            st.write("Değişiklik Detayları:")
+                            
+                            comp_col1, comp_col2 = st.columns(2)
+                            with comp_col1:
+                                st.markdown("🔴 **Eski Veri**")
+                                st.write(f"- Asset ID: {row['asset_id']}")
+                                st.write(f"- Kategori: {row['category']}")
+                                st.write(f"- Durum: {row['status']}")
+                                st.write(f"- Uzunluk: {row['length_km']}")
+                                st.write(f"- Açıklama: {row['description']}")
+                                
+                            with comp_col2:
+                                st.markdown("🟢 **Yeni Veri**")
+                                st.write(f"- Asset ID: {new_data.get('asset_id')}")
+                                st.write(f"- Kategori: {new_data.get('category')}")
+                                st.write(f"- Durum: {new_data.get('status')}")
+                                st.write(f"- Uzunluk: {new_data.get('length_km')}")
+                                st.write(f"- Açıklama: {new_data.get('description')}")
+                                
+                        except Exception as e:
+                            st.error("Düzenleme verisi okunamadı.")
+                    
+                    c_app, c_rej, _ = st.columns([1, 1, 4])
+                    if c_app.button("✅ Onayla", key=f"app_req_{req_id}", type="primary"):
                         conn = get_connection()
-                        conn.execute("DELETE FROM interventions WHERE id = ?", (rec_id,))
+                        if req_type == 'DELETE':
+                            conn.execute("DELETE FROM interventions WHERE id = ?", (int_id,))
+                        elif req_type == 'EDIT':
+                            try:
+                                nd = json.loads(row['new_data'])
+                                conn.execute("""
+                                    UPDATE interventions 
+                                    SET asset_id=?, category=?, status=?, length_km=?, description=?
+                                    WHERE id=?
+                                """, (nd.get('asset_id'), nd.get('category'), nd.get('status'), nd.get('length_km'), nd.get('description'), int_id))
+                            except:
+                                pass
+                        
+                        conn.execute("UPDATE requests SET status = 'APPROVED' WHERE id = ?", (req_id,))
                         conn.commit()
                         conn.close()
+                        st.success("Talep onaylandı ve değişiklik uygulandı.")
                         st.rerun()
-
-                if st.session_state.get(f"admin_edit_{rec_id}", False):
-                    with st.form(f"edit_form_{rec_id}"):
-                        st.write("Kaydı Düzenle")
-                        e_asset = st.text_input("Asset ID", value=str(row['asset_id']))
-                        e_cat = st.selectbox("Kategori", 
-                            ["Ağaç Budama", "Güzergah Değişimi", "Beton Dökümü", "Koridor Açma", "Operasyon Müdahalesi"],
-                            index=["Ağaç Budama", "Güzergah Değişimi", "Beton Dökümü", "Koridor Açma", "Operasyon Müdahalesi"].index(row['category']) if row['category'] in ["Ağaç Budama", "Güzergah Değişimi", "Beton Dökümü", "Koridor Açma", "Operasyon Müdahalesi"] else 0
-                        )
-                        e_status = st.selectbox("Durum", ["Yapılmadı", "Yapıldı", "Bekliyor"], 
-                            index=["Yapılmadı", "Yapıldı", "Bekliyor"].index(row['status']) if row['status'] in ["Yapılmadı", "Yapıldı", "Bekliyor"] else 0
-                        )
                         
-                        e_len = row['length_km']
-                        if e_cat == "Koridor Açma":
-                            e_len_input = st.text_input("Uzunluk (km)", value=str(e_len) if pd.notna(e_len) else "")
+                    if c_rej.button("❌ Reddet", key=f"rej_req_{req_id}"):
+                        conn = get_connection()
+                        conn.execute("UPDATE requests SET status = 'REJECTED' WHERE id = ?", (req_id,))
+                        conn.commit()
+                        conn.close()
+                        st.warning("Talep reddedildi.")
+                        st.rerun()
                         
-                        e_desc = st.text_area("Açıklama", value=str(row['description']) if pd.notna(row['description']) else "")
-                        
-                        if st.form_submit_button("Değişiklikleri Kaydet (Talebi Kapat)"):
-                            final_len = None
-                            if e_cat == "Koridor Açma":
-                                try:
-                                    final_len = float(e_len_input.replace(',', '.'))
-                                except:
-                                    st.error("Geçerli bir km giriniz.")
-                                    st.stop()
-                                    
-                            conn = get_connection()
-                            conn.execute("""
-                                UPDATE interventions 
-                                SET asset_id=?, category=?, status=?, length_km=?, description=?, flag_request=NULL 
-                                WHERE id=?
-                            """, (e_asset, e_cat, e_status, final_len, e_desc, rec_id))
-                            conn.commit()
-                            conn.close()
-                            st.session_state[f"admin_edit_{rec_id}"] = False
-                            st.success("Kayıt güncellendi!")
-                            st.rerun()
                 st.markdown("---")
         else:
             st.info("Bekleyen herhangi bir silme/değişiklik talebi yok.")
@@ -602,6 +715,8 @@ with tab3:
         if not all_interventions.empty:
             perf = all_interventions['created_by'].value_counts().reset_index()
             perf.columns = ['Kullanıcı Adı', 'Girilen Kayıt Sayısı']
+            perf_str = perf.to_json(orient='records')
+            perf = pd.read_json(StringIO(perf_str), orient='records')
             st.dataframe(perf, use_container_width=True)
         else:
             st.info("Sistemde hiç kayıt yok.")
