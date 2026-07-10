@@ -1,0 +1,11 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.db
+!app/database.db
+*.xlsx
+!Kopya Ormanlık Alan Bakım Takip - Toroslar.xlsx
+.streamlit/
+*.log
