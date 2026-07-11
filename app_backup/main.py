@@ -286,8 +286,16 @@ with tab1:
             st.session_state.logged_in_user['default_il'] = selected_il
             st.session_state.logged_in_user['default_oms'] = save_oms
             st.sidebar.success("Varsayılanlar kaydedildi!")
+
+        search_query = st.text_input("🔍 Hat İsmi veya Operasyon Merkezi Ara", "")
+        if search_query:
+            mask = df_filtered['Hat İsmi'].str.contains(search_query, case=False, na=False) | \
+                   df_filtered['Operasyon Merkezi'].str.contains(search_query, case=False, na=False)
+            df_filtered = df_filtered[mask]
         
-        st.info("💡 İpucu: Soldaki menüden filtreleme yapın. Ardından aşağıdaki tabloda herhangi bir satıra **TIKLAYARAK** veri giriş penceresini açabilirsiniz.")
+        with st.popover("💡"):
+            st.info("İpucu: Soldaki menüden filtreleme yapın. Ardından aşağıdaki tabloda herhangi bir satıra **TIKLAYARAK** veri giriş penceresini açabilirsiniz.")
+            
         st.write(f"Filtrelenen Hat Sayısı: **{len(df_filtered)}** (Ekranda en fazla 1000 satır gösterilir)")
         
         # --- DYNAMIC SUMMARY COLUMNS START ---

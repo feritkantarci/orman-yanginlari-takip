@@ -14,12 +14,13 @@ export default function LineTable() {
   const [selectedCity, setSelectedCity] = useState("Tümü");
   const [selectedOms, setSelectedOms] = useState<string[]>([]);
   const [omDropdownOpen, setOmDropdownOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [interventions, setInterventions] = useState<any[]>([]);
   const [selectedInterventions, setSelectedInterventions] = useState<number[]>([]);
-  const [form, setForm] = useState({ category: 'Ağaç Budama', status: 'Yapılmadı', assetId: '', desc: '', lengthKm: '' });
+  const [form, setForm] = useState({ category: 'Ağaç Budama', status: 'Yapılmadı', assetId: '', desc: '', lengthKm: '', quantity: 1 });
   const [saving, setSaving] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
   
@@ -81,6 +82,7 @@ export default function LineTable() {
 
       const data = await fetchAPI('/lines');
       setLines(data);
+      
       
       // Extract unique cities
       const uniqueCities = Array.from(new Set(data.map((l: any) => l.il).filter(Boolean))).sort() as string[];
@@ -182,11 +184,12 @@ export default function LineTable() {
           asset_id: form.assetId,
           description: form.desc,
           status: form.status,
-          length_km: form.lengthKm ? parseFloat(form.lengthKm) : null
+          length_km: form.lengthKm ? parseFloat(form.lengthKm) : null,
+          quantity: form.category === 'Ağaç Budama' ? parseInt(form.quantity as any) || 1 : 1
         })
       });
       setInterventions([newInt, ...interventions]);
-      setForm({...form, assetId: '', desc: '', lengthKm: ''}); // Clear form
+      setForm({...form, assetId: '', desc: '', lengthKm: '', quantity: 1}); // Clear form
       // Reload main lines in background to update counts
       loadLines();
     } catch (err) {
@@ -223,8 +226,40 @@ export default function LineTable() {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedInterventions.length === 0) return;
+    if (!confirm(`Seçili ${selectedInterventions.length} kaydı silmek istediğinize emin misiniz?`)) return;
+    
+    setBulkSaving(true);
+    try {
+      await fetchAPI('/interventions/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({
+          ids: selectedInterventions
+        })
+      });
+      
+      setInterventions(interventions.filter(inv => !selectedInterventions.includes(inv.id)));
+      setSelectedInterventions([]);
+      loadLines();
+    } catch (err) {
+      alert("Toplu silme başarısız. Sadece kendi kayıtlarınızı silebilirsiniz.");
+      console.error(err);
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   const tableBodyRows = useMemo(() => {
-    return filteredLines.map((line) => (
+    let result = filteredLines;
+    if (searchTerm.trim()) {
+      const lowerSearch = searchTerm.toLowerCase();
+      result = result.filter(line => 
+        (line.hat_ismi && line.hat_ismi.toLowerCase().includes(lowerSearch)) ||
+        (line.operasyon_merkezi && line.operasyon_merkezi.toLowerCase().includes(lowerSearch))
+      );
+    }
+    return result.map((line) => (
       <tr 
         key={line.sira_no} 
         onClick={() => handleRowClick(line)}
@@ -233,7 +268,6 @@ export default function LineTable() {
         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
       >
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.sira_no}</td>
-        <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.dagitim_sirketi}</td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.il}</td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.ilce}</td>
         <td style={{ padding: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>{line.operasyon_merkezi}</td>
@@ -247,6 +281,8 @@ export default function LineTable() {
         <td onClick={(e) => handleCategoryClick(e, line, 'Ağaç Budama')} style={{ padding: '1rem', fontSize: '0.9rem', cursor: 'pointer' }}>
           <span style={{ color: line.agac_budama_ok > 0 ? '#10b981' : 'inherit', fontWeight: line.agac_budama_ok > 0 ? 'bold' : 'normal' }}>{line.agac_budama_ok} ok</span>{' | '}
           <span style={{ color: line.agac_budama_nok > 0 ? '#ef4444' : 'inherit', fontWeight: line.agac_budama_nok > 0 ? 'bold' : 'normal' }}>{line.agac_budama_nok} nok</span>
+          {' | '}
+          <span style={{ color: line.ihale_budama ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>{line.ihale_budama ? 'var' : 'yok'}</span>
         </td>
         <td onClick={(e) => handleCategoryClick(e, line, 'Güzergah Değişimi')} style={{ padding: '1rem', fontSize: '0.9rem', cursor: 'pointer' }}>
           <span style={{ color: line.guzergah_degisimi_ok > 0 ? '#10b981' : 'inherit', fontWeight: line.guzergah_degisimi_ok > 0 ? 'bold' : 'normal' }}>{line.guzergah_degisimi_ok} ok</span>{' | '}
@@ -259,6 +295,8 @@ export default function LineTable() {
         <td onClick={(e) => handleCategoryClick(e, line, 'Koridor Açma')} style={{ padding: '1rem', fontSize: '0.9rem', cursor: 'pointer' }}>
           <span style={{ color: line.koridor_acma_ok > 0 ? '#10b981' : 'inherit', fontWeight: line.koridor_acma_ok > 0 ? 'bold' : 'normal' }}>{line.koridor_acma_ok} ok</span>{' | '}
           <span style={{ color: line.koridor_acma_nok > 0 ? '#ef4444' : 'inherit', fontWeight: line.koridor_acma_nok > 0 ? 'bold' : 'normal' }}>{line.koridor_acma_nok} nok</span>
+          {' | '}
+          <span style={{ color: line.ihale_koridor ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>{line.ihale_koridor ? 'var' : 'yok'}</span>
         </td>
         <td onClick={(e) => handleCategoryClick(e, line, 'Operasyon Müdahalesi')} style={{ padding: '1rem', fontSize: '0.9rem', cursor: 'pointer' }}>
           <span style={{ color: line.operasyon_mudahalesi_ok > 0 ? '#10b981' : 'inherit', fontWeight: line.operasyon_mudahalesi_ok > 0 ? 'bold' : 'normal' }}>{line.operasyon_mudahalesi_ok} ok</span>{' | '}
@@ -266,10 +304,11 @@ export default function LineTable() {
         </td>
       </tr>
     ));
-  }, [filteredLines, handleCategoryClick, handleRowClick]);
+  }, [filteredLines, searchTerm, handleCategoryClick, handleRowClick]);
 
   return (
     <div>
+
       <div className="filters-container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <h1 style={{ margin: 0 }}>📋 Hat Listesi ve Veri Girişi</h1>
         <div style={{ display: 'flex', gap: '1rem' }}>
@@ -332,6 +371,23 @@ export default function LineTable() {
         </div>
       </div>
       
+      <div style={{ marginBottom: '1rem' }}>
+        <input 
+          type="text" 
+          placeholder="🔍 Hat ismi veya Operasyon Merkezi Ara..." 
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{ 
+            width: '100%', 
+            padding: '0.8rem 1rem', 
+            borderRadius: 'var(--radius-md)', 
+            border: '1px solid var(--border-color)',
+            background: 'var(--surface-color)',
+            color: 'var(--text-primary)'
+          }} 
+        />
+      </div>
+      
       <div className="glass-panel table-responsive" style={{ overflowX: 'auto', padding: '1px' }}>
         {loading ? (
           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Hatlar yükleniyor...</div>
@@ -340,7 +396,6 @@ export default function LineTable() {
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(0,0,0,0.2)', whiteSpace: 'nowrap' }}>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Sıra No</th>
-                  <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Dağıtım Şirketi</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>İl</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>İlçe</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Operasyon Merkezi</th>
@@ -409,9 +464,15 @@ export default function LineTable() {
                     </select>
                   </div>
                   {form.category === 'Koridor Açma' && (
-                    <div>
-                      <label>Uzunluk (km) *</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Uzunluk (Km)</label>
                       <input type="text" placeholder="Örn: 0.4" value={form.lengthKm} onChange={e=>setForm({...form, lengthKm: e.target.value})} required />
+                    </div>
+                  )}
+                  {form.category === 'Ağaç Budama' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Ara Sayısı (Adet)</label>
+                      <input type="number" min="1" value={form.quantity} onChange={e=>setForm({...form, quantity: parseInt(e.target.value) || 1})} required />
                     </div>
                   )}
                 </div>
@@ -458,6 +519,15 @@ export default function LineTable() {
                       disabled={bulkSaving || selectedInterventions.length === 0}
                     >
                       {bulkSaving ? '...' : '✅ Yapıldı İşaretle'}
+                    </button>
+                    <button 
+                      type="button"
+                      className="btn" 
+                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', backgroundColor: '#ef4444', color: 'white', marginLeft: 'auto' }}
+                      onClick={handleBulkDelete}
+                      disabled={bulkSaving || selectedInterventions.length === 0}
+                    >
+                      {bulkSaving ? '...' : '🗑️ Seçilenleri Sil'}
                     </button>
                   </div>
                 )}

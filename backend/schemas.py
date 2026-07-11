@@ -8,6 +8,7 @@ class InterventionBase(BaseModel):
     description: str
     status: str
     length_km: Optional[float] = None
+    quantity: Optional[int] = 1
 
 class InterventionCreate(InterventionBase):
     pass
@@ -15,6 +16,9 @@ class InterventionCreate(InterventionBase):
 class InterventionBulkUpdate(BaseModel):
     ids: List[int]
     status: str
+
+class InterventionBulkDelete(BaseModel):
+    ids: List[int]
 
 class InterventionResponse(InterventionBase):
     id: int
@@ -48,9 +52,11 @@ class LineResponse(BaseModel):
     beton_dokumu_ok: int = 0
     beton_dokumu_nok: int = 0
     koridor_acma_ok: int = 0
-    koridor_acma_nok: int = 0
-    operasyon_mudahalesi_ok: int = 0
-    operasyon_mudahalesi_nok: int = 0
+    koridor_acma_nok: Optional[int] = 0
+    operasyon_mudahalesi_ok: Optional[int] = 0
+    operasyon_mudahalesi_nok: Optional[int] = 0
+    ihale_koridor: Optional[bool] = False
+    ihale_budama: Optional[bool] = False
 
     class Config:
         from_attributes = True
@@ -62,6 +68,13 @@ class UserLogin(BaseModel):
 class UserDefaultsUpdate(BaseModel):
     default_il: Optional[str] = None
     default_oms: Optional[str] = None
+
+class DashboardPreferencesUpdate(BaseModel):
+    dashboard_preferences: str
+
+class CustomStatRequest(BaseModel):
+    type: str
+    name: str
 
 class RequestCreate(BaseModel):
     request_type: str

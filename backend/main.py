@@ -51,6 +51,34 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
+import functools
+
+@functools.lru_cache(maxsize=1)
+def get_ihale_excel_map():
+    import pandas as pd
+    import os
+    excel_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'alikemal_orman.xlsx')
+    try:
+        df = pd.read_excel(excel_path, sheet_name='ORMANLIK ALANDAN GEÇEN HATLAR', header=2)
+        df['KORİDOR AÇMA '] = df['KORİDOR AÇMA '].fillna('')
+        df['AĞAÇ BUDAMA'] = df['AĞAÇ BUDAMA'].fillna('')
+        excel_map = {}
+        for _, row in df.iterrows():
+            hat = str(row.get('Hat İsmi', '')).strip().upper()
+            om = str(row.get('Operasyon Merkezi', '')).strip().upper()
+            if not hat: continue
+            
+            koridor = str(row.get('KORİDOR AÇMA ', '')).strip().upper()
+            budama = str(row.get('AĞAÇ BUDAMA', '')).strip().upper()
+            excel_map[(om, hat)] = {
+                "koridor": koridor,
+                "budama": budama
+            }
+        return excel_map
+    except Exception as e:
+        print("Excel okuma hatasi:", e)
+        return {}
+
 @app.get("/api/lines", response_model=list[schemas.LineResponse])
 def get_lines(il: str = None, oms: str = None, db: Session = Depends(get_db)):
     # This will be optimized to join interventions, but for now we fetch lines
@@ -113,9 +141,38 @@ def get_lines(il: str = None, oms: str = None, db: Session = Depends(get_db)):
         l_dict['operasyon_mudahalesi_ok'] = get_count(line.sira_no, 'Operasyon Müdahalesi', 'Yapıldı')
         l_dict['operasyon_mudahalesi_nok'] = get_count(line.sira_no, 'Operasyon Müdahalesi', 'Yapılmadı') + get_count(line.sira_no, 'Operasyon Müdahalesi', 'Bekliyor')
         
+        # Add ihale var/yok status
+        excel_map = get_ihale_excel_map()
+        line_om = str(line.operasyon_merkezi).strip().upper()
+        line_hat = str(line.hat_ismi).strip().upper()
+        
+        koridor_excel = excel_map.get((line_om, line_hat), {}).get("koridor", "YOK")
+        budama_excel = excel_map.get((line_om, line_hat), {}).get("budama", "YOK")
+        
+        l_dict['ihale_koridor'] = koridor_excel != "YOK" and koridor_excel != ""
+        l_dict['ihale_budama'] = budama_excel != "YOK" and budama_excel != ""
+        
         result.append(l_dict)
         
     return result
+
+@app.put("/api/interventions/bulk-status")
+def update_interventions_bulk(payload: schemas.InterventionBulkUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    db.query(models.Intervention).filter(models.Intervention.id.in_(payload.ids)).update({models.Intervention.status: payload.status}, synchronize_session=False)
+    db.commit()
+    return {"message": "Success"}
+
+@app.post("/api/interventions/bulk-delete")
+def delete_interventions_bulk(payload: schemas.InterventionBulkDelete, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Normal users can only delete their own records
+    query = db.query(models.Intervention).filter(models.Intervention.id.in_(payload.ids))
+    if current_user.role != "admin":
+        query = query.filter(models.Intervention.created_by == current_user.username)
+        
+    query.delete(synchronize_session=False)
+    db.commit()
+    return {"message": "Success"}
+
 
 @app.get("/api/interventions/{sira_no}", response_model=list[schemas.InterventionResponse])
 def get_interventions_for_line(sira_no: int, db: Session = Depends(get_db)):
@@ -134,15 +191,23 @@ def create_intervention(sira_no: int, intervention: schemas.InterventionCreate, 
     db.refresh(db_intervention)
     return db_intervention
 
-@app.put("/api/interventions/bulk-status")
-def update_interventions_bulk(payload: schemas.InterventionBulkUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    db.query(models.Intervention).filter(models.Intervention.id.in_(payload.ids)).update({models.Intervention.status: payload.status}, synchronize_session=False)
-    db.commit()
-    return {"message": "Success"}
-
 @app.get("/api/me")
 def read_users_me(current_user: models.User = Depends(get_current_user)):
-    return {"username": current_user.username, "role": current_user.role, "default_il": current_user.default_il, "default_oms": current_user.default_oms}
+    import json
+    prefs = current_user.dashboard_preferences
+    if not prefs: prefs = "[]"
+    try:
+        prefs_obj = json.loads(prefs)
+    except:
+        prefs_obj = []
+        
+    return {
+        "username": current_user.username, 
+        "role": current_user.role, 
+        "default_il": current_user.default_il, 
+        "default_oms": current_user.default_oms,
+        "dashboard_preferences": prefs_obj
+    }
 
 @app.put("/api/me/defaults")
 def update_user_defaults(payload: schemas.UserDefaultsUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -272,6 +337,100 @@ def reject_request(id: int, db: Session = Depends(get_db), current_user: models.
     req.status = "REJECTED"
     db.commit()
     return {"message": "Success"}
+
+@app.get("/api/summary/tender-extras")
+def get_tender_extras(oms: str = None, db: Session = Depends(get_db)):
+    target_oms = ['HATAY METROPOL', 'KIRIKHAN', 'REYHANLI']
+    if oms and oms != "Tümü":
+        target_oms = [oms.upper()]
+        
+    excel_map = get_ihale_excel_map()
+            
+    query = db.query(models.Intervention, models.Line).join(
+        models.Line, models.Intervention.sira_no == models.Line.sira_no
+    )
+    
+    extra_koridor_km = 0.0
+    extra_budama_adet = 0
+    
+    for inv, line in query.all():
+        line_om = str(line.operasyon_merkezi).strip().upper()
+        if line_om not in target_oms:
+            continue
+            
+        line_hat = str(line.hat_ismi).strip().upper()
+        
+        koridor_excel = excel_map.get((line_om, line_hat), {}).get("koridor", "YOK")
+        budama_excel = excel_map.get((line_om, line_hat), {}).get("budama", "YOK")
+        
+        if inv.category == "Koridor Açma":
+            if koridor_excel == "YOK" or koridor_excel == "":
+                extra_koridor_km += float(inv.length_km or 0)
+        elif inv.category == "Ağaç Budama":
+            if budama_excel == "YOK" or budama_excel == "":
+                extra_budama_adet += int(inv.quantity or 1)
+                
+    return {
+        "extra_koridor_acma_km": round(extra_koridor_km, 2),
+        "extra_agac_budama_adet": extra_budama_adet
+    }
+
+@app.put("/api/users/me/dashboard-preferences")
+def update_dashboard_preferences(payload: schemas.DashboardPreferencesUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    current_user.dashboard_preferences = payload.dashboard_preferences
+    db.commit()
+    return {"message": "Dashboard preferences updated successfully"}
+
+@app.post("/api/summary/custom-stats")
+def get_custom_stats(payload: schemas.CustomStatRequest, db: Session = Depends(get_db)):
+    q = db.query(models.Line)
+    if payload.type == "om":
+        q = q.filter(models.Line.operasyon_merkezi == payload.name)
+    else:
+        q = q.filter(models.Line.ilce == payload.name)
+    
+    total_lines = q.count()
+    if total_lines == 0:
+        return []
+        
+    lines = q.all()
+    sira_nos = [l.sira_no for l in lines]
+    
+    categories = ["Ağaç Budama", "Koridor Açma", "Beton Dökümü", "Güzergah Değişimi", "Operasyon Müdahalesi"]
+    
+    interventions = db.query(
+        models.Intervention.sira_no,
+        models.Intervention.category,
+        models.Intervention.status
+    ).filter(
+        models.Intervention.sira_no.in_(sira_nos)
+    ).order_by(models.Intervention.created_at.asc()).all()
+    
+    latest_interventions = {}
+    for inv in interventions:
+        key = (inv.sira_no, inv.category)
+        latest_interventions[key] = inv.status
+        
+    results = []
+    for cat in categories:
+        yapildi = 0
+        yapilmadi = 0
+        
+        for sira_no in sira_nos:
+            stat = latest_interventions.get((sira_no, cat))
+            if stat == "Yapıldı":
+                yapildi += 1
+            elif stat == "Yapılmadı":
+                yapilmadi += 1
+                
+        results.append({
+            "category": cat,
+            "yapildi": yapildi,
+            "yapilmadi": yapilmadi,
+            "gerek_yok": total_lines - (yapildi + yapilmadi)
+        })
+        
+    return results
 
 if __name__ == "__main__":
     import uvicorn

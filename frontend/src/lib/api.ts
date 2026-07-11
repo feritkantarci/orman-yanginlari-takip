@@ -9,6 +9,20 @@ export function getToken() {
   return null;
 }
 
+export async function fetchCustomStats(type: string, name: string) {
+  return fetchAPI('/summary/custom-stats', {
+    method: 'POST',
+    body: JSON.stringify({ type, name })
+  });
+}
+
+export async function updateDashboardPreferences(preferencesStr: string) {
+  return fetchAPI('/users/me/dashboard-preferences', {
+    method: 'PUT',
+    body: JSON.stringify({ dashboard_preferences: preferencesStr })
+  });
+}
+
 export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   const token = getToken();
   

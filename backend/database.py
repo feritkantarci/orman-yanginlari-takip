@@ -5,8 +5,8 @@ from sqlalchemy.ext.declarative import declarative_base
 
 # Path to the existing SQLite database
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# The database is in ../app/database.db
-DB_PATH = os.path.join(BASE_DIR, '..', 'app', 'database.db')
+# The database is in the same directory now
+DB_PATH = os.path.join(BASE_DIR, 'database.db')
 
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 

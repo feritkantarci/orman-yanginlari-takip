@@ -10,6 +10,7 @@ class User(Base):
     role = Column(String, nullable=False)
     default_il = Column(String)
     default_oms = Column(String)
+    dashboard_preferences = Column(String, default="[]")
 
 class Line(Base):
     __tablename__ = "lines"
@@ -36,6 +37,7 @@ class Intervention(Base):
     status = Column(String)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     length_km = Column(Float, nullable=True)
+    quantity = Column(Integer, default=1)
     created_by = Column(String)
     flag_request = Column(String, nullable=True)
 

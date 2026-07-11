@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import LineTable from "../../components/LineTable";
 import AdminPanel from "../../components/AdminPanel";
+import SummaryView from "../../components/SummaryView";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -83,8 +84,9 @@ export default function Dashboard() {
           </button>
           
           <button 
+            onClick={() => { setActiveTab('summary'); setIsMobileMenuOpen(false); }}
             className="btn btn-secondary" 
-            style={{ justifyContent: 'flex-start', border: 'none', backgroundColor: 'transparent', opacity: 0.5, cursor: 'not-allowed' }}
+            style={{ justifyContent: 'flex-start', border: 'none', backgroundColor: activeTab === 'summary' ? 'rgba(255,255,255,0.05)' : 'transparent' }}
           >
             📊 Genel Özet
           </button>
@@ -123,6 +125,7 @@ export default function Dashboard() {
         <main className="app-main-content" style={{ flex: 1, padding: '2rem', overflowY: 'auto' }}>
           <div className="container" style={{ maxWidth: '1400px', margin: 0 }}>
             {activeTab === 'lines' && <LineTable />}
+            {activeTab === 'summary' && <SummaryView />}
             {activeTab === 'admin' && <AdminPanel />}
           </div>
         </main>
