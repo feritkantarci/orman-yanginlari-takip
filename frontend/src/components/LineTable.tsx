@@ -271,7 +271,22 @@ export default function LineTable() {
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.il}</td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.ilce}</td>
         <td style={{ padding: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>{line.operasyon_merkezi}</td>
-        <td style={{ padding: '1rem', fontSize: '0.9rem', fontWeight: 500, color: 'var(--accent-color)' }}>{line.hat_ismi}</td>
+        <td className="hat-ismi-td" style={{ padding: '1rem', fontSize: '0.9rem', fontWeight: 500, color: 'var(--accent-color)' }}>
+          <div 
+            style={{ 
+              width: '150px', 
+              minWidth: '80px',
+              maxWidth: '600px',
+              overflow: 'hidden', 
+              textOverflow: 'ellipsis', 
+              whiteSpace: 'nowrap', 
+              resize: 'horizontal'
+            }}
+          >
+            {line.hat_ismi}
+          </div>
+          <div className="hat-ismi-tooltip">{line.hat_ismi}</div>
+        </td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.gerilim_seviyesi}</td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.hat_uzunlugu}</td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{line.mevcut_risk}</td>
@@ -310,8 +325,8 @@ export default function LineTable() {
     <div>
 
       <div className="filters-container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <h1 style={{ margin: 0 }}>📋 Hat Listesi ve Veri Girişi</h1>
-        <div style={{ display: 'flex', gap: '1rem' }}>
+        <h1 className="page-title" style={{ margin: 0 }}>📋 Hat Listesi ve Veri Girişi</h1>
+        <div className="filters-wrapper" style={{ display: 'flex', gap: '1rem' }}>
           <div>
             <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem' }}>İl Filtresi</label>
             <select value={selectedCity} onChange={(e) => {
@@ -439,6 +454,7 @@ export default function LineTable() {
             
             <div style={{ padding: '1.5rem', overflowY: 'auto' }}>
               {/* Form */}
+              {userRole !== 'izleyici' && (
               <form onSubmit={handleSave} style={{ marginBottom: '2rem' }}>
                 <div className="form-grid">
                   <div>
@@ -484,6 +500,7 @@ export default function LineTable() {
                   {saving ? 'Kaydediliyor...' : '💾 Kaydet ve Yeni Ekle'}
                 </button>
               </form>
+              )}
 
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '2rem 0' }} />
               
@@ -502,33 +519,37 @@ export default function LineTable() {
                       />
                       <span style={{ fontSize: '0.85rem' }}>Tümünü Seç</span>
                     </label>
-                    <button 
-                      type="button"
-                      className="btn" 
-                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', backgroundColor: 'var(--surface-hover)' }}
-                      onClick={() => handleBulkStatusUpdate('Yapılmadı')}
-                      disabled={bulkSaving || selectedInterventions.length === 0}
-                    >
-                      {bulkSaving ? '...' : '❌ Yapılmadı İşaretle'}
-                    </button>
-                    <button 
-                      type="button"
-                      className="btn" 
-                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', backgroundColor: '#10b981', color: 'white' }}
-                      onClick={() => handleBulkStatusUpdate('Yapıldı')}
-                      disabled={bulkSaving || selectedInterventions.length === 0}
-                    >
-                      {bulkSaving ? '...' : '✅ Yapıldı İşaretle'}
-                    </button>
-                    <button 
-                      type="button"
-                      className="btn" 
-                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', backgroundColor: '#ef4444', color: 'white', marginLeft: 'auto' }}
-                      onClick={handleBulkDelete}
-                      disabled={bulkSaving || selectedInterventions.length === 0}
-                    >
-                      {bulkSaving ? '...' : '🗑️ Seçilenleri Sil'}
-                    </button>
+                    {userRole !== 'izleyici' && (
+                      <>
+                        <button 
+                          type="button"
+                          className="btn" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', backgroundColor: 'var(--surface-hover)' }}
+                          onClick={() => handleBulkStatusUpdate('Yapılmadı')}
+                          disabled={bulkSaving || selectedInterventions.length === 0}
+                        >
+                          {bulkSaving ? '...' : '❌ Yapılmadı İşaretle'}
+                        </button>
+                        <button 
+                          type="button"
+                          className="btn" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', backgroundColor: '#10b981', color: 'white' }}
+                          onClick={() => handleBulkStatusUpdate('Yapıldı')}
+                          disabled={bulkSaving || selectedInterventions.length === 0}
+                        >
+                          {bulkSaving ? '...' : '✅ Yapıldı İşaretle'}
+                        </button>
+                        <button 
+                          type="button"
+                          className="btn" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', backgroundColor: '#ef4444', color: 'white', marginLeft: 'auto' }}
+                          onClick={handleBulkDelete}
+                          disabled={bulkSaving || selectedInterventions.length === 0}
+                        >
+                          {bulkSaving ? '...' : '🗑️ Seçilenleri Sil'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -596,36 +617,40 @@ export default function LineTable() {
                             <span style={{ fontSize: '0.8rem', color: '#fbbf24', background: 'rgba(251, 191, 36, 0.1)', padding: '0.2rem 0.4rem', borderRadius: '4px' }}>⏳ Talep Bekleniyor</span>
                           ) : (
                             <>
-                              {(userRole === 'admin' || currentUser === intv.created_by) ? (
-                                <button 
-                                  type="button"
-                                  onClick={() => handleDeleteIntervention(intv.id)}
-                                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.5rem', color: '#ef4444', opacity: 0.8 }}
-                                  title="Kaydı Sil"
-                                >
-                                  🗑️
-                                </button>
-                              ) : (
+                              {userRole !== 'izleyici' && (
                                 <>
-                                  <button 
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingRequestInterventionId(intv.id);
-                                      setEditRequestData({ status: intv.status, description: intv.description || '', lengthKm: intv.length_km?.toString() || '' });
-                                    }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.2rem', color: '#60a5fa', opacity: 0.8 }}
-                                    title="Düzenleme Talep Et"
-                                  >
-                                    📝
-                                  </button>
-                                  <button 
-                                    type="button"
-                                    onClick={() => handleCreateRequest(intv.id, 'DELETE')}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.2rem', color: '#fbbf24', opacity: 0.8 }}
-                                    title="Silme Talep Et"
-                                  >
-                                    🗑️
-                                  </button>
+                                  {(userRole === 'admin' || currentUser === intv.created_by) ? (
+                                    <button 
+                                      type="button"
+                                      onClick={() => handleDeleteIntervention(intv.id)}
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.5rem', color: '#ef4444', opacity: 0.8 }}
+                                      title="Kaydı Sil"
+                                    >
+                                      🗑️
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <button 
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingRequestInterventionId(intv.id);
+                                          setEditRequestData({ status: intv.status, description: intv.description || '', lengthKm: intv.length_km?.toString() || '' });
+                                        }}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.2rem', color: '#60a5fa', opacity: 0.8 }}
+                                        title="Düzenleme Talep Et"
+                                      >
+                                        📝
+                                      </button>
+                                      <button 
+                                        type="button"
+                                        onClick={() => handleCreateRequest(intv.id, 'DELETE')}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.2rem', color: '#fbbf24', opacity: 0.8 }}
+                                        title="Silme Talep Et"
+                                      >
+                                        🗑️
+                                      </button>
+                                    </>
+                                  )}
                                 </>
                               )}
                             </>

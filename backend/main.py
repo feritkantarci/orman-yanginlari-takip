@@ -158,12 +158,16 @@ def get_lines(il: str = None, oms: str = None, db: Session = Depends(get_db)):
 
 @app.put("/api/interventions/bulk-status")
 def update_interventions_bulk(payload: schemas.InterventionBulkUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role == "izleyici":
+        raise HTTPException(status_code=403, detail="Forbidden")
     db.query(models.Intervention).filter(models.Intervention.id.in_(payload.ids)).update({models.Intervention.status: payload.status}, synchronize_session=False)
     db.commit()
     return {"message": "Success"}
 
 @app.post("/api/interventions/bulk-delete")
 def delete_interventions_bulk(payload: schemas.InterventionBulkDelete, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role == "izleyici":
+        raise HTTPException(status_code=403, detail="Forbidden")
     # Normal users can only delete their own records
     query = db.query(models.Intervention).filter(models.Intervention.id.in_(payload.ids))
     if current_user.role != "admin":
@@ -181,6 +185,8 @@ def get_interventions_for_line(sira_no: int, db: Session = Depends(get_db)):
 
 @app.post("/api/interventions/{sira_no}", response_model=schemas.InterventionResponse)
 def create_intervention(sira_no: int, intervention: schemas.InterventionCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role == "izleyici":
+        raise HTTPException(status_code=403, detail="Forbidden")
     db_intervention = models.Intervention(
         **intervention.dict(),
         sira_no=sira_no,
@@ -218,6 +224,8 @@ def update_user_defaults(payload: schemas.UserDefaultsUpdate, db: Session = Depe
 
 @app.delete("/api/interventions/{id}")
 def delete_intervention(id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role == "izleyici":
+        raise HTTPException(status_code=403, detail="Forbidden")
     intervention = db.query(models.Intervention).filter(models.Intervention.id == id).first()
     if not intervention:
         raise HTTPException(status_code=404, detail="Not found")
@@ -244,6 +252,8 @@ def get_user_stats(db: Session = Depends(get_db), current_user: models.User = De
 
 @app.post("/api/interventions/{id}/request")
 def create_intervention_request(id: int, payload: schemas.RequestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role == "izleyici":
+        raise HTTPException(status_code=403, detail="Forbidden")
     intervention = db.query(models.Intervention).filter(models.Intervention.id == id).first()
     if not intervention:
         raise HTTPException(status_code=404, detail="Not found")
@@ -431,6 +441,51 @@ def get_custom_stats(payload: schemas.CustomStatRequest, db: Session = Depends(g
         })
         
     return results
+
+@app.get("/api/users", response_model=list[schemas.UserResponse])
+def get_users(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return db.query(models.User).all()
+
+@app.post("/api/users", response_model=schemas.UserResponse)
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    existing_user = db.query(models.User).filter(models.User.username == user.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+        
+    hashed_password = auth.get_password_hash(user.password)
+    db_user = models.User(
+        username=user.username,
+        password_hash=hashed_password,
+        role=user.role,
+        default_il="Tümü",
+        default_oms="Tümü"
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.put("/api/users/{username}", response_model=schemas.UserResponse)
+def update_user(username: str, user: schemas.UserUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+        
+    db_user = db.query(models.User).filter(models.User.username == username).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if user.password:
+        db_user.password_hash = auth.get_password_hash(user.password)
+    db_user.role = user.role
+    
+    db.commit()
+    db.refresh(db_user)
+    return db_user
 
 if __name__ == "__main__":
     import uvicorn

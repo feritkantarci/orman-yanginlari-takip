@@ -91,3 +91,21 @@ class RequestResponse(BaseModel):
     
     class Config:
         orm_mode = True
+
+class UserBase(BaseModel):
+    role: str
+
+class UserCreate(UserBase):
+    username: str
+    password: str
+
+class UserUpdate(UserBase):
+    password: Optional[str] = None
+
+class UserResponse(UserBase):
+    username: str
+    default_il: Optional[str] = None
+    default_oms: Optional[str] = None
+    
+    class Config:
+        from_attributes = True

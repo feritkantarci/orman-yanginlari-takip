@@ -1,6 +1,6 @@
-const API_URL = typeof window !== 'undefined' 
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' 
   ? `http://${window.location.hostname}:8000/api` 
-  : 'http://localhost:8000/api';
+  : 'http://localhost:8000/api');
 
 export function getToken() {
   if (typeof window !== 'undefined') {
@@ -20,6 +20,29 @@ export async function updateDashboardPreferences(preferencesStr: string) {
   return fetchAPI('/users/me/dashboard-preferences', {
     method: 'PUT',
     body: JSON.stringify({ dashboard_preferences: preferencesStr })
+  });
+}
+export async function getUsers() {
+  return fetchAPI('/users');
+}
+
+export async function createUser(data: any) {
+  return fetchAPI('/users', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export async function updateUser(username: string, data: any) {
+  return fetchAPI(`/users/${username}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export async function deleteUser(username: string) {
+  return fetchAPI(`/users/${username}`, {
+    method: 'DELETE'
   });
 }
 

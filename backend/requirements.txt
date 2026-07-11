@@ -31,3 +31,4 @@ uvicorn==0.51.0
 
 pandas
 openpyxl
+psycopg2-binary==2.9.12

@@ -313,3 +313,47 @@ label {
   }
 }
 
+
+/* Custom Tooltip for Hat İsmi */
+.hat-ismi-td {
+  position: relative;
+}
+
+.hat-ismi-td .hat-ismi-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: 80%;
+  left: 1rem;
+  background-color: var(--surface-color);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-color);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  z-index: 1000;
+  transition: opacity 0.2s, visibility 0.2s;
+  transition-delay: 1s; /* 1 saniye bekle */
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  font-size: 0.85rem;
+}
+
+.hat-ismi-td:hover .hat-ismi-tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+
+@media (max-width: 768px) {
+  .page-title {
+    font-size: 1.2rem !important;
+  }
+  .filters-wrapper {
+    flex-direction: column !important;
+    width: 100% !important;
+  }
+  .filters-wrapper > div {
+    width: 100% !important;
+    margin-bottom: 0.5rem;
+  }
+}
