@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import LineTable from "../../components/LineTable";
 import AdminPanel from "../../components/AdminPanel";
 import SummaryView from "../../components/SummaryView";
+import ExportPreview from "../../components/ExportPreview";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -21,8 +22,27 @@ export default function Dashboard() {
     } else {
       setUsername(localStorage.getItem("username") || "");
       setRole(localStorage.getItem("role") || "");
+      loadAppVersion();
     }
   }, [router]);
+
+  const [backendVersion, setBackendVersion] = useState("Yükleniyor...");
+  const frontendVersion = `v${process.env.NEXT_PUBLIC_APP_VERSION || "1.0.1"} (Commit: ${process.env.NEXT_PUBLIC_COMMIT_HASH || "bilinmiyor"}) - ${process.env.NEXT_PUBLIC_COMMIT_DATE || "tarih yok"}`;
+
+  const loadAppVersion = async () => {
+    try {
+      const { fetchAPI } = await import("../../lib/api");
+      const data = await fetchAPI('/version');
+      if (data && data.version) {
+        setBackendVersion(data.version);
+      } else {
+        setBackendVersion("Bilinmiyor");
+      }
+    } catch(err) {
+      console.error("Versiyon çekilemedi:", err);
+      setBackendVersion("Hata");
+    }
+  };
 
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
 
@@ -78,7 +98,7 @@ export default function Dashboard() {
           <button 
             onClick={() => { setActiveTab('lines'); setIsMobileMenuOpen(false); }}
             className="btn btn-secondary" 
-            style={{ justifyContent: 'flex-start', border: 'none', backgroundColor: activeTab === 'lines' ? 'rgba(255,255,255,0.05)' : 'transparent' }}
+            style={{ justifyContent: 'flex-start', border: 'none', backgroundColor: activeTab === 'lines' ? 'rgba(255,255,255,0.05)' : 'transparent', color: activeTab === 'lines' ? 'var(--accent-color)' : 'inherit' }}
           >
             📋 Hat Listesi
           </button>
@@ -86,16 +106,24 @@ export default function Dashboard() {
           <button 
             onClick={() => { setActiveTab('summary'); setIsMobileMenuOpen(false); }}
             className="btn btn-secondary" 
-            style={{ justifyContent: 'flex-start', border: 'none', backgroundColor: activeTab === 'summary' ? 'rgba(255,255,255,0.05)' : 'transparent' }}
+            style={{ justifyContent: 'flex-start', border: 'none', backgroundColor: activeTab === 'summary' ? 'rgba(255,255,255,0.05)' : 'transparent', color: activeTab === 'summary' ? 'var(--accent-color)' : 'inherit' }}
           >
             📊 Genel Özet
+          </button>
+          
+          <button 
+            onClick={() => { setActiveTab('export'); setIsMobileMenuOpen(false); }}
+            className="btn btn-secondary" 
+            style={{ justifyContent: 'flex-start', border: 'none', backgroundColor: activeTab === 'export' ? 'rgba(255,255,255,0.05)' : 'transparent', color: activeTab === 'export' ? 'var(--accent-color)' : 'inherit' }}
+          >
+            📑 Rapor
           </button>
           
           {role === 'admin' && (
             <button 
               onClick={() => { setActiveTab('admin'); setIsMobileMenuOpen(false); }}
               className="btn btn-secondary" 
-              style={{ justifyContent: 'space-between', border: 'none', backgroundColor: activeTab === 'admin' ? 'rgba(255,255,255,0.05)' : 'transparent' }}
+              style={{ justifyContent: 'space-between', border: 'none', backgroundColor: activeTab === 'admin' ? 'rgba(255,255,255,0.05)' : 'transparent', color: activeTab === 'admin' ? 'var(--accent-color)' : 'inherit' }}
             >
               <span>🔒 Admin Paneli</span>
               {pendingRequestsCount > 0 && (
@@ -107,9 +135,15 @@ export default function Dashboard() {
           )}
         </nav>
 
-        <button onClick={handleLogout} className="btn btn-secondary" style={{ marginTop: 'auto', borderColor: 'var(--danger-color)', color: 'var(--danger-color)' }}>
-          Çıkış Yap
-        </button>
+        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: '8px' }}>
+            <div>Web v{frontendVersion}</div>
+            <div>API v{backendVersion}</div>
+          </div>
+          <button onClick={handleLogout} className="btn btn-secondary" style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)', width: '100%' }}>
+            Çıkış Yap
+          </button>
+        </div>
       </aside>
 
       {/* Main Content Area */}
@@ -127,6 +161,7 @@ export default function Dashboard() {
             {activeTab === 'lines' && <LineTable />}
             {activeTab === 'summary' && <SummaryView />}
             {activeTab === 'admin' && <AdminPanel />}
+            {activeTab === 'export' && <ExportPreview />}
           </div>
         </main>
       </div>

@@ -3,11 +3,40 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import timedelta
 import models, schemas, auth
+import math
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+import openpyxl
+import smtplib
+from email.message import EmailMessage
+import os
+import pydantic
 from database import engine, get_db
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Orman Yangınları API")
+
+import subprocess
+
+APP_VERSION = "1.0.1"
+try:
+    commit_hash = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+    iso_date = subprocess.check_output(["git", "log", "-1", "--format=%cI"], text=True).strip()
+    
+    # Simple manual parse for Turkish date
+    from datetime import datetime
+    d = datetime.fromisoformat(iso_date)
+    months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+    date_str = f"{d.day} {months[d.month - 1]} {d.year}"
+    
+    APP_VERSION = f"{APP_VERSION} (Commit: {commit_hash}) - {date_str}"
+except Exception:
+    pass
+
+@app.get("/api/version")
+def get_version():
+    return {"version": APP_VERSION}
 
 # Setup CORS for React frontend
 app.add_middleware(
@@ -77,6 +106,41 @@ def get_ihale_excel_map():
         return excel_map
     except Exception as e:
         print("Excel okuma hatasi:", e)
+        return {}
+
+@functools.lru_cache(maxsize=1)
+def get_toroslar_excel_map():
+    import pandas as pd
+    import os
+    excel_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Kopya Ormanlık Alan Bakım Takip - Toroslar.xlsx')
+    try:
+        df = pd.read_excel(excel_path, header=2)
+        excel_map = {}
+        for _, row in df.iterrows():
+            hat = str(row.get('Hat İsmi', '')).strip().upper()
+            om = str(row.get('Operasyon Merkezi', '')).strip().upper()
+            if not hat or hat == 'NAN': continue
+            
+            def safe_str(val):
+                if pd.isna(val): return ""
+                if isinstance(val, float) and val.is_integer(): return str(int(val))
+                return str(val)
+                
+            excel_map[(om, hat)] = {
+                "sira_no": safe_str(row.get('Sıra No')),
+                "dagitim_sirketi": safe_str(row.get('Dağıtım Şirketi')),
+                "il": safe_str(row.get('İl')),
+                "ilce": safe_str(row.get('İlçe')),
+                "gerilim_seviyesi": safe_str(row.get('Gerilim Seviyesi\n(AG/OG)')),
+                "hat_uzunlugu": safe_str(row.get('Hat Uzunluğu\n(Km)')),
+                "mevcut_risk": safe_str(row.get('Mevcut Risk\n(1./2./3. Derece Riskli)')),
+                "planlanan_bakim": safe_str(row.get('Planlanan Bakım Tarihi')).split()[0] if safe_str(row.get('Planlanan Bakım Tarihi')) else "",
+                "gerceklesen_bakim": safe_str(row.get('Gerçekleşen Bakım Tarihi')).split()[0] if safe_str(row.get('Gerçekleşen Bakım Tarihi')) else "",
+                "siparis_no": safe_str(row.get('SİPARİŞ NUMARASI')),
+            }
+        return excel_map
+    except Exception as e:
+        print("Toroslar Excel okuma hatasi:", e)
         return {}
 
 @app.get("/api/lines", response_model=list[schemas.LineResponse])
@@ -486,6 +550,216 @@ def update_user(username: str, user: schemas.UserUpdate, db: Session = Depends(g
     db.commit()
     db.refresh(db_user)
     return db_user
+
+@app.get("/api/export/preview")
+def get_export_preview(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    excel_map = get_ihale_excel_map()
+    toroslar_map = get_toroslar_excel_map()
+    lines = db.query(models.Line).all()
+    
+    interventions = db.query(models.Intervention).order_by(models.Intervention.created_at.asc()).all()
+    
+    latest_interventions = {}
+    for inv in interventions:
+        key = (inv.sira_no, inv.category, inv.asset_id)
+        latest_interventions[key] = inv
+        
+    stats_map = {}
+    for key, inv in latest_interventions.items():
+        sira_no = inv.sira_no
+        cat = inv.category
+        if sira_no not in stats_map:
+            stats_map[sira_no] = {}
+        if cat not in stats_map[sira_no]:
+            stats_map[sira_no][cat] = {"yapildi": 0.0, "yapilacak": 0.0, "ihale": 0.0}
+            
+        is_yapildi = inv.status == "Yapıldı"
+        # Ağaç budama vb. için adet
+        qty = float(inv.quantity or 1) if cat != "Koridor Açma" else float(inv.length_km or 0)
+        
+        if is_yapildi:
+            stats_map[sira_no][cat]["yapildi"] += qty
+        else:
+            stats_map[sira_no][cat]["yapilacak"] += qty
+
+    result = []
+    for line in lines:
+        line_om = str(line.operasyon_merkezi).strip().upper()
+        line_hat = str(line.hat_ismi).strip().upper()
+        
+        koridor_excel = excel_map.get((line_om, line_hat), {}).get("koridor", "YOK")
+        budama_excel = excel_map.get((line_om, line_hat), {}).get("budama", "YOK")
+        
+        ihale_koridor = "VAR" if koridor_excel != "YOK" and koridor_excel != "" else "YOK"
+        ihale_budama = "VAR" if budama_excel != "YOK" and budama_excel != "" else "YOK"
+        
+        sira = line.sira_no
+        s_map = stats_map.get(sira, {})
+        
+        def get_stat(c_name, key_name):
+            if key_name == "ihale":
+                return "VAR" if (c_name == "Ağaç Budama" and ihale_budama == "VAR") or (c_name == "Koridor Açma" and ihale_koridor == "VAR") else "YOK"
+            return s_map.get(c_name, {}).get(key_name, 0.0)
+
+        t_data = toroslar_map.get((line_om, line_hat), {})
+        
+        result.append({
+            "sira_no": t_data.get("sira_no", line.sira_no),
+            "dagitim_sirketi": t_data.get("dagitim_sirketi", line.dagitim_sirketi),
+            "il": t_data.get("il", line.il),
+            "ilce": t_data.get("ilce", line.ilce),
+            "operasyon_merkezi": line_om,
+            "hat_ismi": line_hat,
+            "gerilim_seviyesi": t_data.get("gerilim_seviyesi", line.gerilim_seviyesi),
+            "hat_uzunlugu": t_data.get("hat_uzunlugu", line.hat_uzunlugu),
+            "mevcut_risk": t_data.get("mevcut_risk", line.mevcut_risk),
+            "planlanan_bakim": t_data.get("planlanan_bakim", ""),
+            "gerceklesen_bakim": t_data.get("gerceklesen_bakim", ""),
+            "siparis_no": t_data.get("siparis_no", line.siparis_no),
+            "agac_budama": {
+                "yapildi": get_stat("Ağaç Budama", "yapildi"),
+                "yapilacak": get_stat("Ağaç Budama", "yapilacak"),
+                "ihale": get_stat("Ağaç Budama", "ihale"),
+            },
+            "guzergah_degisimi": {
+                "yapildi": get_stat("Güzergah Değişimi", "yapildi"),
+                "yapilacak": get_stat("Güzergah Değişimi", "yapilacak"),
+                "ihale": get_stat("Güzergah Değişimi", "ihale"),
+            },
+            "beton_dokumu": {
+                "yapildi": get_stat("Beton Dökümü", "yapildi"),
+                "yapilacak": get_stat("Beton Dökümü", "yapilacak"),
+                "ihale": get_stat("Beton Dökümü", "ihale"),
+            },
+            "koridor_acma": {
+                "yapildi": get_stat("Koridor Açma", "yapildi"),
+                "yapilacak": get_stat("Koridor Açma", "yapilacak"),
+                "ihale": get_stat("Koridor Açma", "ihale"),
+            },
+            "operasyon_mudahalesi": {
+                "yapildi": get_stat("Operasyon Müdahalesi", "yapildi"),
+                "yapilacak": get_stat("Operasyon Müdahalesi", "yapilacak"),
+                "ihale": get_stat("Operasyon Müdahalesi", "ihale"),
+            }
+        })
+        
+    return result
+
+
+
+def generate_excel_file(db: Session):
+    excel_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Kopya Ormanlık Alan Bakım Takip - Toroslar.xlsx')
+    wb = openpyxl.load_workbook(excel_path)
+    ws = wb.active
+    
+    lines = db.query(models.Line).all()
+    line_map = {l.sira_no: l for l in lines}
+    
+    interventions = db.query(models.Intervention).all()
+    stats = {}
+    for inv in interventions:
+        line_obj = line_map.get(inv.sira_no)
+        if not line_obj: continue
+        k1 = str(line_obj.operasyon_merkezi).strip().upper()
+        k2 = str(line_obj.hat_ismi).strip().upper()
+        if (k1, k2) not in stats:
+            stats[(k1, k2)] = {}
+        c_name = inv.category
+        if c_name not in stats[(k1, k2)]:
+            stats[(k1, k2)][c_name] = {"yapildi": 0.0, "yapilacak": 0.0, "ihale": 0.0}
+        status = str(inv.status).lower()
+        if status == "yapıldı": stats[(k1, k2)][c_name]["yapildi"] += float(inv.quantity or 1)
+        elif status == "yapılmadı": stats[(k1, k2)][c_name]["yapilacak"] += float(inv.quantity or 1)
+        elif status == "bekliyor": stats[(k1, k2)][c_name]["yapilacak"] += float(inv.quantity or 1)
+
+    from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+
+    # Stil Tanımlamaları
+    hdr_font = Font(bold=True)
+    hdr_align = Alignment(horizontal="center", vertical="center")
+    hdr_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+    # 2. Satır: Ana Kategori Başlıkları (Merged)
+    categories = [
+        ("Ağaç Budama", 13, 15),
+        ("Güzergah Değişimi", 16, 18),
+        ("Beton Dökümü", 19, 21),
+        ("Koridor Açma", 22, 24),
+        ("Operasyon Müdahalesi", 25, 27)
+    ]
+    
+    for cat_name, start_col, end_col in categories:
+        ws.merge_cells(start_row=2, start_column=start_col, end_row=2, end_column=end_col)
+        cell = ws.cell(row=2, column=start_col)
+        cell.value = cat_name
+        cell.font = hdr_font
+        cell.alignment = hdr_align
+        for c in range(start_col, end_col + 1):
+            ws.cell(row=2, column=c).border = thin_border
+            ws.cell(row=2, column=c).fill = hdr_fill
+
+    # 3. Satır: Alt Başlıklar
+    sub_headers = ["Yapılan", "Yapılacak", "İhale"] * 5
+    for i, header in enumerate(sub_headers):
+        col = 13 + i
+        cell = ws.cell(row=3, column=col)
+        cell.value = header
+        cell.font = hdr_font
+        cell.alignment = hdr_align
+        cell.border = thin_border
+        if header == "Yapılan":
+            cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+        elif header == "Yapılacak":
+            cell.fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
+        elif header == "İhale":
+            cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+
+    for row in range(4, ws.max_row + 1):
+        hat_ismi_cell = ws.cell(row=row, column=6)
+        op_merkezi_cell = ws.cell(row=row, column=5)
+        if not hat_ismi_cell.value or not op_merkezi_cell.value: continue
+        hat = str(hat_ismi_cell.value).strip().upper()
+        om = str(op_merkezi_cell.value).strip().upper()
+        s_map = stats.get((om, hat), {})
+        def get_stat(c_name, key_name): return s_map.get(c_name, {}).get(key_name, 0.0)
+            
+        ws.cell(row=row, column=13).value = get_stat("Ağaç Budama", "yapildi")
+        ws.cell(row=row, column=14).value = get_stat("Ağaç Budama", "yapilacak")
+        ws.cell(row=row, column=15).value = get_stat("Ağaç Budama", "ihale")
+        ws.cell(row=row, column=16).value = get_stat("Güzergah Değişimi", "yapildi")
+        ws.cell(row=row, column=17).value = get_stat("Güzergah Değişimi", "yapilacak")
+        ws.cell(row=row, column=18).value = get_stat("Güzergah Değişimi", "ihale")
+        ws.cell(row=row, column=19).value = get_stat("Beton Dökümü", "yapildi")
+        ws.cell(row=row, column=20).value = get_stat("Beton Dökümü", "yapilacak")
+        ws.cell(row=row, column=21).value = get_stat("Beton Dökümü", "ihale")
+        ws.cell(row=row, column=22).value = get_stat("Koridor Açma", "yapildi")
+        ws.cell(row=row, column=23).value = get_stat("Koridor Açma", "yapilacak")
+        ws.cell(row=row, column=24).value = get_stat("Koridor Açma", "ihale")
+        ws.cell(row=row, column=25).value = get_stat("Operasyon Müdahalesi", "yapildi")
+        ws.cell(row=row, column=26).value = get_stat("Operasyon Müdahalesi", "yapilacak")
+        ws.cell(row=row, column=27).value = get_stat("Operasyon Müdahalesi", "ihale")
+
+        # Veri satırlarına da kenarlık ve ortalama ekleyelim ki şık dursun
+        for c in range(13, 28):
+            ws.cell(row=row, column=c).border = thin_border
+            ws.cell(row=row, column=c).alignment = Alignment(horizontal="center")
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+@app.get("/api/export/excel")
+def export_excel(db: Session = Depends(get_db)):
+    output = generate_excel_file(db)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Merkez_Raporu_Guncel.xlsx"}
+    )
+
+
 
 if __name__ == "__main__":
     import uvicorn
