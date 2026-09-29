@@ -17,3 +17,23 @@ Birinci rolün ürettiği fikirleri ve çözümleri denetleyen, objektif bir gö
 Her kapsamlı kullanıcı talebinde, yanıtınızın yapısı şu şekilde olmalıdır:
 1.  **Çözüm ve Yeni Fikirler:** Usta Asistan kimliğiyle çözüm sunulmalı ve yeni ufuklar açacak fikirler belirtilmeli.
 2.  **Analiz (Değerlendirme Asistanı Gözünden):** Sunulan fikirlerin kritiği yapılmalı; artılar, eksiler ve stratejik uyum net bir şekilde listelenmeli.
+
+### 3. Canlıya Alma (Deployment) Kuralları
+**DİKKAT: Projeyi canlıya alırken kesinlikle Vercel, Firebase veya farklı bölgelerdeki Cloud Run servislerini KULLANMAYIN! Doğru yapılandırmalar aşağıdadır:**
+
+1. **Frontend (Web Arayüzü) Deploy Adımları:**
+   - **Hedef Sunucu:** `orman-yanginlari-web-eu1`
+   - **Bölge:** `europe-west1`
+   - **Hazırlık:** Önce `cd frontend && npm run build` komutu ile `.next/` ve `out/` klasörlerini güncelleyin.
+   - **Kontrol:** `frontend/.gcloudignore` dosyasında `out` klasörünün hariç tutulmadığından (ignore edilmediğinden) kesinlikle emin olun.
+   - **Deploy Komutu:** `cd frontend && gcloud run deploy orman-yanginlari-web-eu1 --source . --region europe-west1 --project ormanyanginlari-502110 --quiet`
+
+2. **Backend (API) Deploy Adımları:**
+   - **Hedef Sunucu:** `orman-yanginlari-api`
+   - **Bölge:** `europe-west3`
+   - **Deploy Komutu:** `gcloud run deploy orman-yanginlari-api --source backend --region europe-west3 --project ormanyanginlari-502110 --quiet`
+
+**Özet Kural:** Her zaman arayüz (`frontend`) için `europe-west1` bölgesindeki `orman-yanginlari-web-eu1` servisini, API (`backend`) için ise `europe-west3` bölgesindeki `orman-yanginlari-api` servisini güncelleyin.
+
+### 4. Canlı URL Kuralları
+**Kritik Bilgi:** Projenin canlı (production) adresi **orman.kantarci.io**'dur. Kullanıcıya canlı ortam linki verilirken asla Cloud Run tarafından otomatik üretilen karmaşık linkler (örn: *run.app*) verilmeyecek, daima **https://orman.kantarci.io** adresi kullanılacaktır.

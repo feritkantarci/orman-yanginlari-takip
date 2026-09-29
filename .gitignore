@@ -1,11 +1,20 @@
 venv/
 .venv/
+backend/venv/
+backend/.venv/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
 __pycache__/
 *.pyc
 .DS_Store
 *.db
 !app/database.db
 *.xlsx
-!Kopya Ormanlık Alan Bakım Takip - Toroslar.xlsx
 .streamlit/
 *.log
+app_backup/
+.env
+backend/.env
+frontend/.env*
+

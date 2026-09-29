@@ -11,6 +11,7 @@ class User(Base):
     default_il = Column(String)
     default_oms = Column(String)
     dashboard_preferences = Column(String, default="[]")
+    password_encrypted = Column(String, nullable=True)
 
 class Line(Base):
     __tablename__ = "lines"
@@ -40,6 +41,8 @@ class Intervention(Base):
     quantity = Column(Integer, default=1)
     created_by = Column(String)
     flag_request = Column(String, nullable=True)
+    intervention_unit = Column(String, default="BELLİ DEĞİL")
+    asset_type = Column(String, default="DİREK", nullable=True)
 
 class Request(Base):
     __tablename__ = "requests"

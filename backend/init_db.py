@@ -1,12 +1,11 @@
 import pandas as pd
-import sqlite3
 import os
+import models
+from database import engine, SessionLocal
 
 def init_db():
-    # Paths
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     excel_path = os.path.join(base_dir, 'Kopya Ormanlık Alan Bakım Takip - Toroslar.xlsx')
-    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database.db')
 
     print(f"Reading excel from: {excel_path}")
     
@@ -24,30 +23,30 @@ def init_db():
     for col in df.columns:
         print(f" - {col}")
 
-    # Connect to SQLite
-    conn = sqlite3.connect(db_path)
-    
-    # Save lines to database
-    df.to_sql('lines', conn, if_exists='replace', index=False)
+    # Ensure date columns are parsed correctly for PostgreSQL
+    df['Planlanan Bakım Tarihi'] = pd.to_datetime(df['Planlanan Bakım Tarihi'], errors='coerce')
+    df['Gerçekleşen Bakım Tarihi'] = pd.to_datetime(df['Gerçekleşen Bakım Tarihi'], errors='coerce')
 
-    # Create the interventions table for tracking Asset IDs
-    conn.execute('''
-    CREATE TABLE IF NOT EXISTS interventions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sira_no INTEGER,
-        asset_id TEXT,
-        category TEXT,
-        description TEXT,
-        status TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(sira_no) REFERENCES lines("Sıra No")
-    )
-    ''')
-    
-    conn.commit()
-    conn.close()
+    # Create tables if not exist
+    print("Creating tables if they do not exist...")
+    models.Base.metadata.create_all(bind=engine)
 
-    print(f"Database initialized successfully at {db_path} with {len(df)} lines.")
+    # Clean existing lines to avoid duplicates
+    print("Clearing old lines data...")
+    db = SessionLocal()
+    try:
+        db.query(models.Line).delete()
+        db.commit()
+    except Exception as e:
+        print("Error clearing lines table:", e)
+        db.rollback()
+    finally:
+        db.close()
+
+    # Save lines to database using SQLAlchemy engine connection
+    print("Saving lines to database...")
+    df.to_sql('lines', con=engine, if_exists='append', index=False)
+    print("Database initialized successfully.")
 
 if __name__ == "__main__":
     init_db()

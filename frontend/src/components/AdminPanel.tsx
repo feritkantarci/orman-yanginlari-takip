@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { fetchAPI } from "../lib/api";
+import UserInterventionsModal from "./UserInterventionsModal";
 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState<'leaderboard' | 'requests' | 'users'>('leaderboard');
@@ -12,6 +13,16 @@ export default function AdminPanel() {
   // User Form State
   const [showUserForm, setShowUserForm] = useState(false);
   const [userForm, setUserForm] = useState({ username: '', password: '', role: 'user', isEdit: false });
+  const [revealedPasswords, setRevealedPasswords] = useState<{[key: string]: string}>({});
+  const [currentUser, setCurrentUser] = useState("");
+  
+  // User Interventions Modal State
+  const [selectedUserForModal, setSelectedUserForModal] = useState("");
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+
+  useEffect(() => {
+    setCurrentUser(localStorage.getItem('username') || "");
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'leaderboard') {
@@ -76,6 +87,44 @@ export default function AdminPanel() {
       loadUsers();
     } catch (err: any) {
       alert('Hata: ' + err.message);
+    }
+  };
+
+  const handleRevealPassword = async (targetUsername: string) => {
+    if (revealedPasswords[targetUsername]) {
+      setRevealedPasswords(prev => {
+        const copy = { ...prev };
+        delete copy[targetUsername];
+        return copy;
+      });
+      return;
+    }
+
+    const adminPassword = prompt(`"${targetUsername}" kullanıcısının şifresini çözmek için kendi yönetici şifrenizi girin:`);
+    if (!adminPassword) return;
+
+    try {
+      const result = await fetchAPI(`/users/${targetUsername}/reveal`, {
+        method: 'POST',
+        body: JSON.stringify({ admin_password: adminPassword })
+      });
+      setRevealedPasswords(prev => ({
+        ...prev,
+        [targetUsername]: result.password
+      }));
+    } catch (err: any) {
+      alert("Hata: " + (err.message || "Şifre doğrulanamadı."));
+    }
+  };
+
+  const handleDeleteUser = async (targetUsername: string) => {
+    if (!confirm(`"${targetUsername}" kullanıcısını silmek istediğinize emin misiniz?`)) return;
+    try {
+      await fetchAPI(`/users/${targetUsername}`, { method: 'DELETE' });
+      alert('Kullanıcı silindi');
+      loadUsers();
+    } catch (err: any) {
+      alert('Hata: ' + (err.message || 'Kullanıcı silinemedi.'));
     }
   };
 
@@ -151,7 +200,29 @@ export default function AdminPanel() {
                       <td style={{ padding: '1rem' }}>
                         {index === 0 ? '🥇 1.' : index === 1 ? '🥈 2.' : index === 2 ? '🥉 3.' : `${index + 1}.`}
                       </td>
-                      <td style={{ padding: '1rem', fontWeight: 'bold' }}>{stat.username}</td>
+                      <td style={{ padding: '1rem', fontWeight: 'bold' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedUserForModal(stat.username);
+                            setIsUserModalOpen(true);
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--accent-color)',
+                            textDecoration: 'underline',
+                            cursor: 'pointer',
+                            fontWeight: 'bold',
+                            padding: 0,
+                            fontFamily: 'inherit',
+                            fontSize: 'inherit',
+                            textAlign: 'left'
+                          }}
+                        >
+                          {stat.username}
+                        </button>
+                      </td>
                       <td style={{ padding: '1rem', color: 'var(--accent-color)', fontWeight: 'bold' }}>{stat.count}</td>
                     </tr>
                   ))}
@@ -252,6 +323,7 @@ export default function AdminPanel() {
                     onChange={e => setUserForm({...userForm, username: e.target.value})} 
                     disabled={userForm.isEdit}
                     required
+                    autoComplete="off"
                     style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--surface-color)', color: 'white' }}
                   />
                 </div>
@@ -262,6 +334,7 @@ export default function AdminPanel() {
                     value={userForm.password} 
                     onChange={e => setUserForm({...userForm, password: e.target.value})} 
                     required={!userForm.isEdit}
+                    autoComplete="new-password"
                     style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--surface-color)', color: 'white' }}
                   />
                 </div>
@@ -294,6 +367,7 @@ export default function AdminPanel() {
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <th style={{ padding: '1rem', color: 'var(--text-muted)' }}>Kullanıcı Adı</th>
                     <th style={{ padding: '1rem', color: 'var(--text-muted)' }}>Rol</th>
+                    <th style={{ padding: '1rem', color: 'var(--text-muted)' }}>Şifre</th>
                     <th style={{ padding: '1rem', color: 'var(--text-muted)' }}>İşlemler</th>
                   </tr>
                 </thead>
@@ -312,6 +386,20 @@ export default function AdminPanel() {
                           {u.role.toUpperCase()}
                         </span>
                       </td>
+                      <td style={{ padding: '1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <code style={{ fontSize: '0.9rem', color: revealedPasswords[u.username] ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+                            {revealedPasswords[u.username] || '••••••'}
+                          </code>
+                          <button
+                            onClick={() => handleRevealPassword(u.username)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', display: 'flex', alignItems: 'center', padding: '0.2rem' }}
+                            title={revealedPasswords[u.username] ? "Gizle" : "Şifreyi Göster"}
+                          >
+                            {revealedPasswords[u.username] ? '🙈' : '👁️'}
+                          </button>
+                        </div>
+                      </td>
                       <td style={{ padding: '1rem', display: 'flex', gap: '0.5rem' }}>
                         <button 
                           className="btn btn-secondary"
@@ -323,12 +411,32 @@ export default function AdminPanel() {
                         >
                           ✏️ Düzenle
                         </button>
+                        {u.username !== currentUser && (
+                          <button
+                            className="btn btn-danger"
+                            style={{ 
+                              padding: '0.3rem 0.8rem', 
+                              fontSize: '0.8rem', 
+                              backgroundColor: '#dc2626', 
+                              color: 'white', 
+                              border: 'none', 
+                              borderRadius: '4px', 
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.2rem'
+                            }}
+                            onClick={() => handleDeleteUser(u.username)}
+                          >
+                            ❌ Sil
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
                   {users.length === 0 && (
                     <tr>
-                      <td colSpan={3} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Kullanıcı bulunamadı.</td>
+                      <td colSpan={4} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Kullanıcı bulunamadı.</td>
                     </tr>
                   )}
                 </tbody>
@@ -337,6 +445,15 @@ export default function AdminPanel() {
           )}
         </>
       )}
+      <UserInterventionsModal
+        username={selectedUserForModal}
+        isOpen={isUserModalOpen}
+        onClose={() => {
+          setIsUserModalOpen(false);
+          loadStats();
+        }}
+        onRefresh={loadStats}
+      />
     </div>
   );
 }
