@@ -1000,8 +1000,7 @@ def generate_excel_file(db: Session):
         lines_by_om[norm_om].append(l)
 
     priority_oms = ['HATAY METROPOL', 'KIRIKHAN', 'REYHANLI']
-    other_oms = sorted([om for om in lines_by_om.keys() if om not in priority_oms])
-    sorted_oms = priority_oms + other_oms
+    sorted_oms = priority_oms
 
     cat_keys = [
         ('Ağaç Budama', 'agac_budama_ok', 'agac_budama_nok'),
