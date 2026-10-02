@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.orm import Session
 from datetime import timedelta
+from collections import defaultdict
 import models, schemas, auth, master_service
 import math
 from io import BytesIO
@@ -939,35 +940,202 @@ def generate_excel_file(db: Session):
 
     output = BytesIO()
     wb = xlsxwriter.Workbook(output, {'in_memory': True})
-    ws = wb.add_worksheet("Özet Rapor")
+    
+    # 1. Master Tablo Verisini Çek (Single Source of Truth)
+    master_lines = master_service.build_all_master_lines(db)
 
-    # --- Format Tanımları ---
+    # ----------------------------------------------------
+    # --- FORMAT TANIMLARI ---
+    # ----------------------------------------------------
+    title_fmt = wb.add_format({'bold': True, 'font_size': 13, 'font_color': '#1E293B'})
+    sec_hdr_blue = wb.add_format({'bold': True, 'font_size': 10, 'bg_color': '#1E40AF', 'font_color': 'white', 'border': 1, 'valign': 'vcenter'})
+    sec_hdr_teal = wb.add_format({'bold': True, 'font_size': 10, 'bg_color': '#065F46', 'font_color': 'white', 'border': 1, 'valign': 'vcenter'})
+
+    banner_label = wb.add_format({'bold': True, 'bg_color': '#FEE2E2', 'font_color': '#991B1B', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    banner_box = wb.add_format({'bold': True, 'bg_color': '#FEF2F2', 'font_color': '#991B1B', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+
+    tbl_th_blue = wb.add_format({'bold': True, 'bg_color': '#3B82F6', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    tbl_th_teal = wb.add_format({'bold': True, 'bg_color': '#10B981', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+
+    cell_om = wb.add_format({'bold': True, 'border': 1, 'valign': 'vcenter', 'align': 'center', 'bg_color': '#F8FAFC'})
+    cell_border = wb.add_format({'border': 1, 'valign': 'vcenter'})
+    cell_center = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
+    border_format = cell_border
+    border_center = cell_center
+    cell_green = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': '#059669', 'bold': True})
+    cell_red = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': '#DC2626', 'bold': True})
+    cell_total = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'bold': True, 'bg_color': '#F1F5F9'})
+    cell_uninsp = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#FFF1F2', 'font_color': '#BE123C', 'bold': True})
+    tot_row_fmt = wb.add_format({'bold': True, 'bg_color': '#E2E8F0', 'border': 1, 'valign': 'vcenter', 'align': 'center'})
+
+    # ----------------------------------------------------
+    # --- SAYFA 1: GENEL ÖZET İCMALİ ---
+    # ----------------------------------------------------
+    ws_sum = wb.add_worksheet("Genel Özet İcmali")
+    ws_sum.set_column('A:A', 2)
+    ws_sum.set_column('B:B', 22)
+    ws_sum.set_column('C:C', 14)
+    ws_sum.set_column('D:D', 24)
+    ws_sum.set_column('E:E', 14)
+    ws_sum.set_column('F:F', 14)
+    ws_sum.set_column('G:G', 16)
+    ws_sum.set_column('H:H', 26)
+
+    # Başlık
+    ws_sum.write('B2', '🌲 ORMAN YANGINLARI HAT BAKIM VE MÜDAHALE SİSTEMİ', title_fmt)
+    ws_sum.write('B3', 'GENEL ÖZET PANELİ - İCMAL TABLOLARI', wb.add_format({'bold': True, 'font_color': '#475569', 'font_size': 11}))
+
+    # OM Gruplama
+    lines_by_om = defaultdict(list)
+    for l in master_lines:
+        raw_om = str(l.get('operasyon_merkezi') or 'DİĞER').strip().upper()
+        if raw_om in ['HATAY METROPOL', 'HATAY']:
+            norm_om = 'HATAY METROPOL'
+        elif 'KIRIKHAN' in raw_om:
+            norm_om = 'KIRIKHAN'
+        elif 'REYHANLI' in raw_om:
+            norm_om = 'REYHANLI'
+        else:
+            norm_om = raw_om
+        lines_by_om[norm_om].append(l)
+
+    priority_oms = ['HATAY METROPOL', 'KIRIKHAN', 'REYHANLI']
+    other_oms = sorted([om for om in lines_by_om.keys() if om not in priority_oms])
+    sorted_oms = priority_oms + other_oms
+
+    cat_keys = [
+        ('Ağaç Budama', 'agac_budama_ok', 'agac_budama_nok'),
+        ('Koridor Açma', 'koridor_acma_ok', 'koridor_acma_nok'),
+        ('Beton Dökümü', 'beton_dokumu_ok', 'beton_dokumu_nok'),
+        ('Güzergah Değişimi', 'guzergah_degisimi_ok', 'guzergah_degisimi_nok'),
+        ('Operasyon Müdahalesi', 'operasyon_mudahalesi_ok', 'operasyon_mudahalesi_nok')
+    ]
+
+    # İhale Kapsamına İlave İşler (Yönetici Özeti)
+    extra_budama_ae = sum(1 for l in master_lines if (l.get('agac_budama_ok', 0) > 0 or l.get('agac_budama_nok', 0) > 0) and not l.get('ihale_budama', False) and str(l.get('operasyon_merkezi', '')).upper() in priority_oms)
+    extra_koridor_ae = sum(1 for l in master_lines if (l.get('koridor_acma_ok', 0) > 0 or l.get('koridor_acma_nok', 0) > 0) and not l.get('ihale_koridor', False) and str(l.get('operasyon_merkezi', '')).upper() in priority_oms)
+
+    ws_sum.merge_range('B5:D5', '🚨 İHALE KAPSAMINA İLAVE İŞLER (YÖNETİCİ ÖZETİ)', banner_label)
+    ws_sum.merge_range('B6:D6', 'Sözleşme keşfinde yer almayıp sahada tespit yapılan Anahtarlama Elemanı sayıları', wb.add_format({'font_size': 9, 'bg_color': '#FEF2F2', 'font_color': '#7F1D1D', 'border': 1, 'align': 'center', 'valign': 'vcenter'}))
+    ws_sum.write('E5', 'Koridor Açma', banner_label)
+    ws_sum.write('E6', f'{extra_koridor_ae} Anahtarlama Elemanı', banner_box)
+    ws_sum.write('F5', 'Ağaç Budama', banner_label)
+    ws_sum.write('F6', f'{extra_budama_ae} Anahtarlama Elemanı', banner_box)
+
+    # 1. BÖLÜM: ANAHTARLAMA ELEMANI BAZLI
+    r_idx = 8
+    ws_sum.merge_range(r_idx, 1, r_idx, 7, '1. ⚡ ANAHTARLAMA ELEMANI BAZLI GENEL ÖZET TABLOLARI', sec_hdr_blue)
+    r_idx += 1
+    headers_ae = ['Operasyon Merkezi', 'Toplam AE', 'Kategori', 'Yapıldı (AE)', 'Yapılmadı (AE)', 'Toplam Tespit', 'Kontrol Edilmeyen AE']
+    for c_idx, h in enumerate(headers_ae):
+        ws_sum.write(r_idx, 1 + c_idx, h, tbl_th_blue)
+    r_idx += 1
+
+    t_ae_tot, t_ae_uninsp = 0, 0
+    t_ae_cat_ok = defaultdict(int)
+    t_ae_cat_nok = defaultdict(int)
+
+    for om in sorted_oms:
+        fl = lines_by_om[om]
+        tot_ae = len(fl)
+        uninsp_ae = sum(1 for l in fl if l.get('saha_tespit') == 'KONTROL EDİLMEDİ')
+        t_ae_tot += tot_ae
+        t_ae_uninsp += uninsp_ae
+        
+        start_r = r_idx
+        for c_idx, (cat_name, ok_k, nok_k) in enumerate(cat_keys):
+            ok_ae = sum(1 for l in fl if l.get(nok_k, 0) == 0 and l.get(ok_k, 0) > 0)
+            nok_ae = sum(1 for l in fl if l.get(nok_k, 0) > 0)
+            t_ae_cat_ok[cat_name] += ok_ae
+            t_ae_cat_nok[cat_name] += nok_ae
+            
+            ws_sum.write(r_idx, 3, cat_name, cell_border)
+            ws_sum.write(r_idx, 4, ok_ae, cell_green if ok_ae > 0 else cell_center)
+            ws_sum.write(r_idx, 5, nok_ae, cell_red if nok_ae > 0 else cell_center)
+            ws_sum.write(r_idx, 6, ok_ae + nok_ae, cell_total)
+            r_idx += 1
+        
+        end_r = r_idx - 1
+        ws_sum.merge_range(start_r, 1, end_r, 1, om, cell_om)
+        ws_sum.merge_range(start_r, 2, end_r, 2, tot_ae, cell_center)
+        ws_sum.merge_range(start_r, 7, end_r, 7, f'{uninsp_ae} / {tot_ae}', cell_uninsp)
+
+    # Section 1 Total
+    ws_sum.merge_range(r_idx, 1, r_idx, 2, f'GENEL TOPLAM ({t_ae_tot} AE)', tot_row_fmt)
+    ws_sum.write(r_idx, 3, 'Tüm Kategoriler', tot_row_fmt)
+    ws_sum.write(r_idx, 4, sum(t_ae_cat_ok.values()), tot_row_fmt)
+    ws_sum.write(r_idx, 5, sum(t_ae_cat_nok.values()), tot_row_fmt)
+    ws_sum.write(r_idx, 6, sum(t_ae_cat_ok.values()) + sum(t_ae_cat_nok.values()), tot_row_fmt)
+    ws_sum.write(r_idx, 7, f'{t_ae_uninsp} / {t_ae_tot}', cell_uninsp)
+    r_idx += 3
+
+    # 2. BÖLÜM: ASSET ID BAZLI
+    ws_sum.merge_range(r_idx, 1, r_idx, 7, '2. 📍 ASSET ID (VARLIK / DİREK) BAZLI GENEL ÖZET TABLOLARI', sec_hdr_teal)
+    r_idx += 1
+    headers_ast = ['Operasyon Merkezi', 'Toplam Varlık', 'Kategori', 'Yapıldı (Adet)', 'Yapılmadı (Adet)', 'Toplam Tespit', 'Kontrol Bekleyen Varlık']
+    for c_idx, h in enumerate(headers_ast):
+        ws_sum.write(r_idx, 1 + c_idx, h, tbl_th_teal)
+    r_idx += 1
+
+    t_ast_tot, t_ast_uninsp = 0, 0
+    t_ast_cat_ok = defaultdict(int)
+    t_ast_cat_nok = defaultdict(int)
+
+    for om in sorted_oms:
+        fl = lines_by_om[om]
+        tot_ast = sum(l.get('varlik_sayilari', {}).get('toplam', 0) for l in fl)
+        uninsp_ast = sum(l.get('varlik_sayilari', {}).get('kontrol_bekleyen', 0) for l in fl)
+        t_ast_tot += tot_ast
+        t_ast_uninsp += uninsp_ast
+        
+        start_r = r_idx
+        for c_idx, (cat_name, ok_k, nok_k) in enumerate(cat_keys):
+            ok_ast = sum(l.get(ok_k, 0) for l in fl)
+            nok_ast = sum(l.get(nok_k, 0) for l in fl)
+            t_ast_cat_ok[cat_name] += ok_ast
+            t_ast_cat_nok[cat_name] += nok_ast
+            
+            ws_sum.write(r_idx, 3, cat_name, cell_border)
+            ws_sum.write(r_idx, 4, ok_ast, cell_green if ok_ast > 0 else cell_center)
+            ws_sum.write(r_idx, 5, nok_ast, cell_red if nok_ast > 0 else cell_center)
+            ws_sum.write(r_idx, 6, ok_ast + nok_ast, cell_total)
+            r_idx += 1
+            
+        end_r = r_idx - 1
+        ws_sum.merge_range(start_r, 1, end_r, 1, om, cell_om)
+        ws_sum.merge_range(start_r, 2, end_r, 2, tot_ast, cell_center)
+        ws_sum.merge_range(start_r, 7, end_r, 7, f'{uninsp_ast} / {tot_ast}' if tot_ast > 0 else '0', cell_uninsp)
+
+    # Section 2 Total
+    ws_sum.merge_range(r_idx, 1, r_idx, 2, f'GENEL TOPLAM ({t_ast_tot:,} Varlık)', tot_row_fmt)
+    ws_sum.write(r_idx, 3, 'Tüm Kategoriler', tot_row_fmt)
+    ws_sum.write(r_idx, 4, sum(t_ast_cat_ok.values()), tot_row_fmt)
+    ws_sum.write(r_idx, 5, sum(t_ast_cat_nok.values()), tot_row_fmt)
+    ws_sum.write(r_idx, 6, sum(t_ast_cat_ok.values()) + sum(t_ast_cat_nok.values()), tot_row_fmt)
+    ws_sum.write(r_idx, 7, f'{t_ast_uninsp:,} / {t_ast_tot:,}' if t_ast_tot > 0 else '0', cell_uninsp)
+
+    # ----------------------------------------------------
+    # --- SAYFA 2: HAT VE ANAHTARLAMA LİSTESİ ---
+    # ----------------------------------------------------
+    ws = wb.add_worksheet("Hat ve Anahtarlama Listesi")
+
+    # Header Formatları
     hdr_format = wb.add_format({
         'bold': True, 'font_color': 'white', 'bg_color': '#4F81BD',
         'align': 'center', 'valign': 'vcenter', 'border': 1
     })
-    
-    # Kategori Formatları (Main Header)
     cat_pink_format = wb.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#F2DCDB'})
     cat_blue_format = wb.add_format({'bold': True, 'font_color': 'white', 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#538DD5'})
     cat_lightblue_format = wb.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#B8CCE4'})
 
-    # Alt Başlık Formatları (Sub Header)
     sub_pink_format = wb.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#E6B8B7', 'font_color': 'white'})
     sub_blue_format = wb.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#8DB4E2', 'font_color': 'white'})
     sub_lightblue_format = wb.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#C6D9F1'})
-    
-    border_format = wb.add_format({'border': 1})
-    border_center = wb.add_format({'border': 1, 'align': 'center'})
 
-    # 1. Master Tablo Verisini Çek (Single Source of Truth)
-    master_lines = master_service.build_all_master_lines(db)
-
-    # --- Başlıkları Yazdır ---
     common_headers = [
         "Sıra No", "Dağıtım Şirketi", "İl", "İlçe", "Operasyon Merkezi",
-        "Hat İsmi", "Gerilim Seviyesi", "Hat Uzunluğu (Km)", "Mevcut Risk",
-        "Planlanan Bakım Tarihi", "Gerçekleşen Bakım Tarihi", "Sipariş Numarası", "İŞ DURUMU"
+        "Hat / AE İsmi", "Gerilim Seviyesi", "Hat Uzunluğu (Km)", "Mevcut Risk",
+        "Planlanan Bakım Tarihi", "Gerçekleşen Bakım Tarihi", "Sipariş Numarası", "SAHA TESPİT", "İŞ DURUMU"
     ]
     for col_idx, header in enumerate(common_headers):
         ws.merge_range(0, col_idx, 1, col_idx, header, hdr_format)
@@ -976,43 +1144,43 @@ def generate_excel_file(db: Session):
         else: ws.set_column(col_idx, col_idx, 15)
 
     # Kategoriler
-    # 1. Ağaç Budama (13, 14, 15)
-    ws.merge_range(0, 13, 0, 15, "AĞAÇ BUDAMA", cat_pink_format)
-    ws.write(1, 13, "YAPILDI", sub_pink_format)
-    ws.write(1, 14, "YAPILMADI", sub_pink_format)
-    ws.write(1, 15, "İHALE KEŞFİNDE VAR", sub_pink_format)
-    ws.set_column(13, 15, 18)
+    # 1. Ağaç Budama (14, 15, 16)
+    ws.merge_range(0, 14, 0, 16, "AĞAÇ BUDAMA", cat_pink_format)
+    ws.write(1, 14, "YAPILDI", sub_pink_format)
+    ws.write(1, 15, "YAPILMADI", sub_pink_format)
+    ws.write(1, 16, "İHALE KEŞFİNDE VAR", sub_pink_format)
+    ws.set_column(14, 16, 18)
 
-    # 2. Güzergah Değişimi (16, 17, 18)
-    ws.merge_range(0, 16, 0, 18, "GÜZERGAH DEĞİŞİMİ", cat_blue_format)
-    ws.write(1, 16, "YAPILDI", sub_blue_format)
-    ws.write(1, 17, "YAPILMADI", sub_blue_format)
-    ws.write(1, 18, "İHALE KEŞFİNDE VAR", sub_blue_format)
-    ws.set_column(16, 18, 18)
+    # 2. Güzergah Değişimi (17, 18, 19)
+    ws.merge_range(0, 17, 0, 19, "GÜZERGAH DEĞİŞİMİ", cat_blue_format)
+    ws.write(1, 17, "YAPILDI", sub_blue_format)
+    ws.write(1, 18, "YAPILMADI", sub_blue_format)
+    ws.write(1, 19, "İHALE KEŞFİNDE VAR", sub_blue_format)
+    ws.set_column(17, 19, 18)
 
-    # 3. Beton Dökümü (19, 20)
-    ws.merge_range(0, 19, 0, 20, "BETON DÖKÜMÜ", cat_pink_format)
-    ws.write(1, 19, "YAPILDI", sub_pink_format)
-    ws.write(1, 20, "YAPILMADI", sub_pink_format)
-    ws.set_column(19, 20, 18)
+    # 3. Beton Dökümü (20, 21)
+    ws.merge_range(0, 20, 0, 21, "BETON DÖKÜMÜ", cat_pink_format)
+    ws.write(1, 20, "YAPILDI", sub_pink_format)
+    ws.write(1, 21, "YAPILMADI", sub_pink_format)
+    ws.set_column(20, 21, 18)
 
-    # 4. Koridor Açma (21, 22, 23)
-    ws.merge_range(0, 21, 0, 23, "KORİDOR AÇMA", cat_lightblue_format)
-    ws.write(1, 21, "YAPILDI", sub_lightblue_format)
-    ws.write(1, 22, "YAPILMADI", sub_lightblue_format)
-    ws.write(1, 23, "İHALE KEŞFİNDE VAR", sub_lightblue_format)
-    ws.set_column(21, 23, 18)
+    # 4. Koridor Açma (22, 23, 24)
+    ws.merge_range(0, 22, 0, 24, "KORİDOR AÇMA", cat_lightblue_format)
+    ws.write(1, 22, "YAPILDI", sub_lightblue_format)
+    ws.write(1, 23, "YAPILMADI", sub_lightblue_format)
+    ws.write(1, 24, "İHALE KEŞFİNDE VAR", sub_lightblue_format)
+    ws.set_column(22, 24, 18)
 
-    # 5. Operasyon Müdahalesi (24, 25)
-    ws.merge_range(0, 24, 0, 25, "OPERASYON MÜDAHALESİ", cat_pink_format)
-    ws.write(1, 24, "YAPILDI", sub_pink_format)
-    ws.write(1, 25, "YAPILMADI", sub_pink_format)
-    ws.set_column(24, 25, 18)
+    # 5. Operasyon Müdahalesi (25, 26)
+    ws.merge_range(0, 25, 0, 26, "OPERASYON MÜDAHALESİ", cat_pink_format)
+    ws.write(1, 25, "YAPILDI", sub_pink_format)
+    ws.write(1, 26, "YAPILMADI", sub_pink_format)
+    ws.set_column(25, 26, 18)
 
     ws.freeze_panes(2, 0)
-    ws.autofilter(1, 0, 1, 25)
+    ws.autofilter(1, 0, 1, 26)
 
-    # 2. Master verileri yaz
+    # Master verileri yaz
     row_idx = 2
     for line in master_lines:
         ws.write(row_idx, 0, line.get("sira_no", ""), border_format)
@@ -1027,30 +1195,31 @@ def generate_excel_file(db: Session):
         ws.write(row_idx, 9, line.get("planlanan_bakim_tarihi", ""), border_format)
         ws.write(row_idx, 10, line.get("gerceklesen_bakim_tarihi", ""), border_format)
         ws.write(row_idx, 11, line.get("siparis_no", ""), border_format)
-        ws.write(row_idx, 12, line.get("son_durum", "YAPILMADI"), border_center)
+        ws.write(row_idx, 12, line.get("saha_tespit", "KONTROL EDİLMEDİ"), border_center)
+        ws.write(row_idx, 13, line.get("is_durumu", "YAPILMADI"), border_center)
         
         # Ağaç Budama
-        ws.write(row_idx, 13, line.get("agac_budama_ok", 0), border_center)
-        ws.write(row_idx, 14, line.get("agac_budama_nok", 0), border_center)
-        ws.write(row_idx, 15, "VAR" if line.get("ihale_budama") else "YOK", border_center)
+        ws.write(row_idx, 14, line.get("agac_budama_ok", 0), border_center)
+        ws.write(row_idx, 15, line.get("agac_budama_nok", 0), border_center)
+        ws.write(row_idx, 16, "VAR" if line.get("ihale_budama") else "YOK", border_center)
         
         # Güzergah Değişimi
-        ws.write(row_idx, 16, line.get("guzergah_degisimi_ok", 0), border_center)
-        ws.write(row_idx, 17, line.get("guzergah_degisimi_nok", 0), border_center)
-        ws.write(row_idx, 18, "YOK", border_center)
+        ws.write(row_idx, 17, line.get("guzergah_degisimi_ok", 0), border_center)
+        ws.write(row_idx, 18, line.get("guzergah_degisimi_nok", 0), border_center)
+        ws.write(row_idx, 19, "YOK", border_center)
         
         # Beton Dökümü (İhale yok)
-        ws.write(row_idx, 19, line.get("beton_dokumu_ok", 0), border_center)
-        ws.write(row_idx, 20, line.get("beton_dokumu_nok", 0), border_center)
+        ws.write(row_idx, 20, line.get("beton_dokumu_ok", 0), border_center)
+        ws.write(row_idx, 21, line.get("beton_dokumu_nok", 0), border_center)
         
         # Koridor Açma
-        ws.write(row_idx, 21, line.get("koridor_acma_ok", 0), border_center)
-        ws.write(row_idx, 22, line.get("koridor_acma_nok", 0), border_center)
-        ws.write(row_idx, 23, "VAR" if line.get("ihale_koridor") else "YOK", border_center)
+        ws.write(row_idx, 22, line.get("koridor_acma_ok", 0), border_center)
+        ws.write(row_idx, 23, line.get("koridor_acma_nok", 0), border_center)
+        ws.write(row_idx, 24, "VAR" if line.get("ihale_koridor") else "YOK", border_center)
         
         # Operasyon Müdahalesi (İhale yok)
-        ws.write(row_idx, 24, line.get("operasyon_mudahalesi_ok", 0), border_center)
-        ws.write(row_idx, 25, line.get("operasyon_mudahalesi_nok", 0), border_center)
+        ws.write(row_idx, 25, line.get("operasyon_mudahalesi_ok", 0), border_center)
+        ws.write(row_idx, 26, line.get("operasyon_mudahalesi_nok", 0), border_center)
 
         row_idx += 1
 
