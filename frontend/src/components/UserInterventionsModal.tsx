@@ -321,7 +321,6 @@ export default function UserInterventionsModal({ username, isOpen, onClose, onRe
                                 >
                                   <option value="Yapılmadı">Yapılmadı</option>
                                   <option value="Yapıldı">Yapıldı</option>
-                                  <option value="Bekliyor">Bekliyor</option>
                                 </select>
                                 {idx === 0 ? (
                                   <button

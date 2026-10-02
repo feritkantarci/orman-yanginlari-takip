@@ -106,6 +106,14 @@ def run_startup_migration():
                         inv.asset_type = "DİREK (SAHA TESPİTİ)"
             db.commit()
 
+        # Convert any 'Bekliyor' status to 'Yapılmadı'
+        try:
+            db.execute(text("UPDATE interventions SET status = 'Yapılmadı' WHERE status LIKE '%Bekliyor%' OR status LIKE '%bekliyor%' OR status LIKE '%BEKLIYOR%'"))
+            db.commit()
+        except Exception as e:
+            print("Bekliyor migration error:", e)
+            db.rollback()
+
         payload_path = os.path.join(os.path.dirname(__file__), 'migration_payload.json')
         if not os.path.exists(payload_path):
             return
@@ -347,15 +355,7 @@ def get_toroslar_excel_map():
         return {}
 
 def get_overall_intervention_status(status_str: str) -> str:
-    if not status_str:
-        return "Yapılmadı"
-    statuses = [s.strip().lower() for s in status_str.split(",")]
-    if all(s == "yapıldı" for s in statuses):
-        return "Yapıldı"
-    elif any(s == "bekliyor" for s in statuses):
-        return "Bekliyor"
-    else:
-        return "Yapılmadı"
+    return master_service.get_overall_intervention_status(status_str)
 
 @app.get("/api/lines")
 def get_lines(il: str = None, oms: str = None, db: Session = Depends(get_db)):
@@ -769,56 +769,79 @@ def update_dashboard_preferences(payload: schemas.DashboardPreferencesUpdate, db
 
 @app.post("/api/summary/custom-stats")
 def get_custom_stats(payload: schemas.CustomStatRequest, db: Session = Depends(get_db)):
-    q = db.query(models.Line)
+    all_master = master_service.build_all_master_lines(db)
+    
     if payload.type == "om":
-        q = q.filter(models.Line.operasyon_merkezi == payload.name)
+        filtered_lines = [l for l in all_master if str(l.get("operasyon_merkezi", "")).strip().upper() == str(payload.name).strip().upper()]
     else:
-        q = q.filter(models.Line.ilce == payload.name)
-    
-    total_lines = q.count()
+        filtered_lines = [l for l in all_master if str(l.get("ilce", "")).strip().upper() == str(payload.name).strip().upper()]
+        
+    total_lines = len(filtered_lines)
     if total_lines == 0:
-        return []
-        
-    lines = q.all()
-    sira_nos = [l.sira_no for l in lines]
-    
-    categories = ["Ağaç Budama", "Koridor Açma", "Beton Dökümü", "Güzergah Değişimi", "Operasyon Müdahalesi"]
-    
-    interventions = db.query(
-        models.Intervention.sira_no,
-        models.Intervention.category,
-        models.Intervention.status
-    ).filter(
-        models.Intervention.sira_no.in_(sira_nos)
-    ).order_by(models.Intervention.created_at.asc()).all()
-    
-    latest_interventions = {}
-    for inv in interventions:
-        key = (inv.sira_no, inv.category)
-        latest_interventions[key] = inv.status
-        
-    results = []
-    for cat in categories:
-        yapildi = 0
-        yapilmadi = 0
-        
-        for sira_no in sira_nos:
-            stat_str = latest_interventions.get((sira_no, cat))
-            if stat_str is not None:
-                status = get_overall_intervention_status(stat_str)
-                if status == "Yapıldı":
-                    yapildi += 1
-                else: # Yapılmadı veya Bekliyor ise
-                    yapilmadi += 1
-                
-        results.append({
-            "category": cat,
-            "yapildi": yapildi,
-            "yapilmadi": yapilmadi,
-            "gerek_yok": total_lines - (yapildi + yapilmadi)
+        return {
+            "categories": [],
+            "ae_categories": [],
+            "asset_categories": [],
+            "uninspected_lines": 0,
+            "inspected_lines": 0,
+            "total_lines": 0,
+            "uninspected_assets": 0,
+            "inspected_assets": 0,
+            "total_assets": 0
+        }
+
+    # 1. Anahtarlama Elemanı (Line) İstatistikleri
+    uninspected_lines = sum(1 for l in filtered_lines if l.get("saha_tespit") == "KONTROL EDİLMEDİ")
+    inspected_lines = sum(1 for l in filtered_lines if l.get("saha_tespit") == "KONTROL EDİLDİ")
+
+    # 2. Asset ID (Direk / Kablo) İstatistikleri
+    total_assets = sum(l.get("varlik_sayilari", {}).get("toplam", 0) for l in filtered_lines)
+    uninspected_assets = sum(l.get("varlik_sayilari", {}).get("kontrol_bekleyen", 0) for l in filtered_lines)
+    inspected_assets = sum(l.get("varlik_sayilari", {}).get("kontrol_edilen", 0) for l in filtered_lines)
+
+    cat_keys = [
+        ("Ağaç Budama", "agac_budama_ok", "agac_budama_nok"),
+        ("Koridor Açma", "koridor_acma_ok", "koridor_acma_nok"),
+        ("Beton Dökümü", "beton_dokumu_ok", "beton_dokumu_nok"),
+        ("Güzergah Değişimi", "guzergah_degisimi_ok", "guzergah_degisimi_nok"),
+        ("Operasyon Müdahalesi", "operasyon_mudahalesi_ok", "operasyon_mudahalesi_nok")
+    ]
+
+    ae_results = []
+    asset_results = []
+
+    for cat_name, ok_key, nok_key in cat_keys:
+        # Asset ID Bazında
+        asset_ok = sum(l.get(ok_key, 0) for l in filtered_lines)
+        asset_nok = sum(l.get(nok_key, 0) for l in filtered_lines)
+        asset_results.append({
+            "category": cat_name,
+            "yapildi": asset_ok,
+            "yapilmadi": asset_nok,
+            "toplam_tespit": asset_ok + asset_nok
         })
         
-    return results
+        # Anahtarlama Elemanı Bazında
+        ae_ok = sum(1 for l in filtered_lines if l.get(nok_key, 0) == 0 and l.get(ok_key, 0) > 0)
+        ae_nok = sum(1 for l in filtered_lines if l.get(nok_key, 0) > 0)
+        ae_results.append({
+            "category": cat_name,
+            "yapildi": ae_ok,
+            "yapilmadi": ae_nok,
+            "toplam_tespit": ae_ok + ae_nok
+        })
+
+    return {
+        "categories": ae_results,
+        "ae_categories": ae_results,
+        "asset_categories": asset_results,
+        "total_lines": total_lines,
+        "uninspected_lines": uninspected_lines,
+        "inspected_lines": inspected_lines,
+        "total_assets": total_assets,
+        "uninspected_assets": uninspected_assets,
+        "inspected_assets": inspected_assets
+    }
 
 @app.get("/api/users", response_model=list[schemas.UserResponse])
 def get_users(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -939,33 +962,15 @@ def generate_excel_file(db: Session):
     
     border_format = wb.add_format({'border': 1})
     border_center = wb.add_format({'border': 1, 'align': 'center'})
-    date_format = wb.add_format({'border': 1, 'num_format': 'dd.mm.yyyy'})
 
-    # 1. Bütün müdahaleleri çek (LATEST mantığıyla)
-    interventions = db.query(models.Intervention).order_by(models.Intervention.created_at.asc()).all()
-    latest_interventions = {}
-    for inv in interventions:
-        if not inv.sira_no: continue
-        key = (inv.sira_no, inv.category, inv.asset_id)
-        latest_interventions[key] = inv
-
-    # Line bazında grupla
-    stats_by_sira = {}
-    for inv in latest_interventions.values():
-        sira = inv.sira_no
-        if sira not in stats_by_sira:
-            stats_by_sira[sira] = []
-        stats_by_sira[sira].append(inv)
-
-    # Ihale mantığı için map
-    excel_map = get_ihale_excel_map()
+    # 1. Master Tablo Verisini Çek (Single Source of Truth)
+    master_lines = master_service.build_all_master_lines(db)
 
     # --- Başlıkları Yazdır ---
-    # Ortak Başlıklar (0-12)
     common_headers = [
         "Sıra No", "Dağıtım Şirketi", "İl", "İlçe", "Operasyon Merkezi",
         "Hat İsmi", "Gerilim Seviyesi", "Hat Uzunluğu (Km)", "Mevcut Risk",
-        "Planlanan Bakım Tarihi", "Gerçekleşen Bakım Tarihi", "Sipariş Numarası", "SON DURUM"
+        "Planlanan Bakım Tarihi", "Gerçekleşen Bakım Tarihi", "Sipariş Numarası", "İŞ DURUMU"
     ]
     for col_idx, header in enumerate(common_headers):
         ws.merge_range(0, col_idx, 1, col_idx, header, hdr_format)
@@ -1010,115 +1015,45 @@ def generate_excel_file(db: Session):
     ws.freeze_panes(2, 0)
     ws.autofilter(1, 0, 1, 25)
 
-    # 2. Bütün hatları (lines) çek ve yaz
-    lines = db.query(models.Line).order_by(models.Line.sira_no).all()
-    
+    # 2. Master verileri yaz
     row_idx = 2
-    for line in lines:
-        sira = line.sira_no
-        line_invs = stats_by_sira.get(sira, [])
-        
-        line_om = str(line.operasyon_merkezi).strip().upper() if line.operasyon_merkezi else ""
-        line_hat = str(line.hat_ismi).strip().upper() if line.hat_ismi else ""
-        koridor_excel = excel_map.get((line_om, line_hat), {}).get("koridor", "YOK")
-        budama_excel = excel_map.get((line_om, line_hat), {}).get("budama", "YOK")
-        ihale_koridor = "VAR" if koridor_excel != "YOK" and koridor_excel != "" else "YOK"
-        ihale_budama = "VAR" if budama_excel != "YOK" and budama_excel != "" else "YOK"
-        
-        def get_ihale(cat: str):
-            if cat == "Ağaç Budama" and ihale_budama == "VAR": return "VAR"
-            if cat == "Koridor Açma" and ihale_koridor == "VAR": return "VAR"
-            has_ihale = False
-            for i in line_invs:
-                if i.category and i.category.strip() == cat and i.status:
-                    overall = get_overall_intervention_status(i.status).lower()
-                    if overall in ["yapılmadı", "bekliyor"] and i.intervention_unit and "MÜTEAHHİT" in i.intervention_unit.upper():
-                        has_ihale = True
-                        break
-            return "VAR" if has_ihale else "YOK"
-
-        def get_stat(cat: str, st: str):
-            total = 0.0
-            for i in line_invs:
-                if i.category and i.category.strip() == cat and i.status:
-                    overall = get_overall_intervention_status(i.status).lower()
-                    
-                    match = False
-                    if st.lower() == "yapıldı" and overall == "yapıldı":
-                        match = True
-                    elif st.lower() == "yapılacak" and overall in ["yapılmadı", "bekliyor"]:
-                        match = True
-                        
-                    if match:
-                        qty = float(i.quantity or 1) if cat != "Koridor Açma" else float(i.length_km or 0)
-                        total += qty
-            return total if total > 0 else 0
-
-        # Son Durum hesaplama
-        all_done = True
-        has_any = False
-        for inv in line_invs:
-            has_any = True
-            if not inv.status:
-                all_done = False
-                break
-            statuses = [s.strip().lower() for s in inv.status.split(",")]
-            if any(s in ["yapılmadı", "bekliyor"] for s in statuses):
-                all_done = False
-                break
-                
-        if not has_any:
-            son_durum = "GEREK YOK"
-        elif all_done:
-            son_durum = "TAMAMLANDI"
-        else:
-            son_durum = "YAPILMADI"
-
-        ws.write(row_idx, 0, line.sira_no, border_format)
-        ws.write(row_idx, 1, line.dagitim_sirketi or "", border_format)
-        ws.write(row_idx, 2, line.il or "", border_format)
-        ws.write(row_idx, 3, line.ilce or "", border_format)
-        ws.write(row_idx, 4, line.operasyon_merkezi or "", border_format)
-        ws.write(row_idx, 5, line.hat_ismi or "", border_format)
-        ws.write(row_idx, 6, line.gerilim_seviyesi or "", border_format)
-        ws.write(row_idx, 7, line.hat_uzunlugu or 0, border_format)
-        ws.write(row_idx, 8, line.mevcut_risk or "", border_format)
-        
-        if line.planlanan_bakim:
-            ws.write_datetime(row_idx, 9, line.planlanan_bakim, date_format)
-        else:
-            ws.write(row_idx, 9, "", border_format)
-            
-        if line.gerceklesen_bakim:
-            ws.write_datetime(row_idx, 10, line.gerceklesen_bakim, date_format)
-        else:
-            ws.write(row_idx, 10, "", border_format)
-            
-        ws.write(row_idx, 11, line.siparis_no or "", border_format)
-        ws.write(row_idx, 12, son_durum, border_center)
+    for line in master_lines:
+        ws.write(row_idx, 0, line.get("sira_no", ""), border_format)
+        ws.write(row_idx, 1, line.get("dagitim_sirketi", ""), border_format)
+        ws.write(row_idx, 2, line.get("il", ""), border_format)
+        ws.write(row_idx, 3, line.get("ilce", ""), border_format)
+        ws.write(row_idx, 4, line.get("operasyon_merkezi", ""), border_format)
+        ws.write(row_idx, 5, line.get("hat_ismi", ""), border_format)
+        ws.write(row_idx, 6, line.get("gerilim_seviyesi", ""), border_format)
+        ws.write(row_idx, 7, line.get("hat_uzunlugu", 0), border_format)
+        ws.write(row_idx, 8, line.get("mevcut_risk", ""), border_format)
+        ws.write(row_idx, 9, line.get("planlanan_bakim_tarihi", ""), border_format)
+        ws.write(row_idx, 10, line.get("gerceklesen_bakim_tarihi", ""), border_format)
+        ws.write(row_idx, 11, line.get("siparis_no", ""), border_format)
+        ws.write(row_idx, 12, line.get("son_durum", "YAPILMADI"), border_center)
         
         # Ağaç Budama
-        ws.write(row_idx, 13, get_stat("Ağaç Budama", "yapıldı"), border_center)
-        ws.write(row_idx, 14, get_stat("Ağaç Budama", "yapılacak"), border_center)
-        ws.write(row_idx, 15, get_ihale("Ağaç Budama"), border_center)
+        ws.write(row_idx, 13, line.get("agac_budama_ok", 0), border_center)
+        ws.write(row_idx, 14, line.get("agac_budama_nok", 0), border_center)
+        ws.write(row_idx, 15, "VAR" if line.get("ihale_budama") else "YOK", border_center)
         
         # Güzergah Değişimi
-        ws.write(row_idx, 16, get_stat("Güzergah Değişimi", "yapıldı"), border_center)
-        ws.write(row_idx, 17, get_stat("Güzergah Değişimi", "yapılacak"), border_center)
-        ws.write(row_idx, 18, get_ihale("Güzergah Değişimi"), border_center)
+        ws.write(row_idx, 16, line.get("guzergah_degisimi_ok", 0), border_center)
+        ws.write(row_idx, 17, line.get("guzergah_degisimi_nok", 0), border_center)
+        ws.write(row_idx, 18, "YOK", border_center)
         
         # Beton Dökümü (İhale yok)
-        ws.write(row_idx, 19, get_stat("Beton Dökümü", "yapıldı"), border_center)
-        ws.write(row_idx, 20, get_stat("Beton Dökümü", "yapılacak"), border_center)
+        ws.write(row_idx, 19, line.get("beton_dokumu_ok", 0), border_center)
+        ws.write(row_idx, 20, line.get("beton_dokumu_nok", 0), border_center)
         
         # Koridor Açma
-        ws.write(row_idx, 21, get_stat("Koridor Açma", "yapıldı"), border_center)
-        ws.write(row_idx, 22, get_stat("Koridor Açma", "yapılacak"), border_center)
-        ws.write(row_idx, 23, get_ihale("Koridor Açma"), border_center)
+        ws.write(row_idx, 21, line.get("koridor_acma_ok", 0), border_center)
+        ws.write(row_idx, 22, line.get("koridor_acma_nok", 0), border_center)
+        ws.write(row_idx, 23, "VAR" if line.get("ihale_koridor") else "YOK", border_center)
         
         # Operasyon Müdahalesi (İhale yok)
-        ws.write(row_idx, 24, get_stat("Operasyon Müdahalesi", "yapıldı"), border_center)
-        ws.write(row_idx, 25, get_stat("Operasyon Müdahalesi", "yapılacak"), border_center)
+        ws.write(row_idx, 24, line.get("operasyon_mudahalesi_ok", 0), border_center)
+        ws.write(row_idx, 25, line.get("operasyon_mudahalesi_nok", 0), border_center)
 
         row_idx += 1
 
@@ -1269,7 +1204,8 @@ def generate_detailed_excel_file(db: Session):
         ws_data.write(row_idx, 5, line.hat_ismi if line else "", border_format)
         ws_data.write(row_idx, 6, inv.asset_id, border_format)
         ws_data.write(row_idx, 7, inv.category, border_format)
-        ws_data.write(row_idx, 8, inv.status, border_format)
+        std_inv_status = get_overall_intervention_status(inv.status)
+        ws_data.write(row_idx, 8, std_inv_status, border_format)
         ws_data.write(row_idx, 9, inv.quantity, border_format)
         ws_data.write(row_idx, 10, inv.length_km, border_format)
         ws_data.write(row_idx, 11, inv.description, border_format)

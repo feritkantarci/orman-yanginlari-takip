@@ -144,14 +144,16 @@ export default function InterventionModal({ line, isOpen, onClose, onRefresh }: 
   const [modalSearch, setModalSearch] = useState('');
   const [quickUpdatingId, setQuickUpdatingId] = useState<number | null>(null);
 
-  const handleQuickStatusUpdate = async (id: number, newStatus: string) => {
+  const handleQuickStatusUpdate = async (id: number, newStatus: string, newDesc?: string) => {
     setQuickUpdatingId(id);
     try {
+      const payload: any = { status: newStatus };
+      if (newDesc !== undefined) {
+        payload.description = newDesc;
+      }
       const updatedInt = await fetchAPI(`/interventions/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({
-          status: newStatus
-        })
+        body: JSON.stringify(payload)
       });
       setInterventions(prev => prev.map(i => i.id === id ? updatedInt : i));
       if (onRefresh) onRefresh();
@@ -635,7 +637,6 @@ export default function InterventionModal({ line, isOpen, onClose, onRefresh }: 
                             >
                               <option value="Yapılmadı">Yapılmadı</option>
                               <option value="Yapıldı">Yapıldı</option>
-                              <option value="Bekliyor">Bekliyor</option>
                             </select>
                             {unitIdx === 0 ? (
                               <button 
@@ -910,15 +911,6 @@ export default function InterventionModal({ line, isOpen, onClose, onRefresh }: 
                     <button 
                       type="button"
                       className="btn" 
-                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', backgroundColor: '#f59e0b', color: 'white', fontWeight: 600 }}
-                      onClick={() => handleBulkStatusUpdate('Bekliyor')}
-                      disabled={bulkSaving || selectedInterventions.length === 0}
-                    >
-                      {bulkSaving ? '...' : '⏳ Bekliyor İşaretle'}
-                    </button>
-                    <button 
-                      type="button"
-                      className="btn" 
                       style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444', color: '#ef4444', marginLeft: 'auto' }}
                       onClick={handleBulkDelete}
                       disabled={bulkSaving || selectedInterventions.length === 0}
@@ -1026,7 +1018,6 @@ export default function InterventionModal({ line, isOpen, onClose, onRefresh }: 
                               >
                                 <option value="Yapılmadı">Yapılmadı</option>
                                 <option value="Yapıldı">Yapıldı</option>
-                                <option value="Bekliyor">Bekliyor</option>
                               </select>
                               {idx === 0 ? (
                                 <button 
@@ -1161,11 +1152,11 @@ export default function InterventionModal({ line, isOpen, onClose, onRefresh }: 
                               borderRadius: '4px',
                               fontSize: '0.7rem',
                               fontWeight: 'bold',
-                              background: intv.status?.includes('Yapıldı') ? 'rgba(16, 185, 129, 0.2)' : intv.status?.includes('Bekliyor') ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.15)',
-                              color: intv.status?.includes('Yapıldı') ? '#10b981' : intv.status?.includes('Bekliyor') ? '#f59e0b' : '#ef4444',
+                              background: intv.status?.includes('Yapıldı') ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.15)',
+                              color: intv.status?.includes('Yapıldı') ? '#10b981' : '#ef4444',
                               border: '1px solid rgba(255,255,255,0.1)'
                             }}>
-                              {intv.status?.includes('Yapıldı') ? '✅ YAPILDI' : intv.status?.includes('Bekliyor') ? '⏳ BEKLİYOR' : '❌ YAPILMADI'}
+                              {intv.status?.includes('Yapıldı') ? '✅ YAPILDI' : '❌ YAPILMADI'}
                             </span>
                           )}
                         </div>
@@ -1193,7 +1184,6 @@ export default function InterventionModal({ line, isOpen, onClose, onRefresh }: 
                                 >
                                   <option>Yapıldı</option>
                                   <option>Yapılmadı</option>
-                                  <option>Bekliyor</option>
                                 </select>
                               </div>
                               <textarea 
@@ -1216,60 +1206,85 @@ export default function InterventionModal({ line, isOpen, onClose, onRefresh }: 
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                           {userRole !== 'izleyici' && (
                             <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                              <button 
-                                type="button"
-                                onClick={() => handleQuickStatusUpdate(intv.id, 'Yapıldı')}
-                                disabled={quickUpdatingId === intv.id}
-                                style={{
-                                  padding: '0.25rem 0.5rem',
-                                  fontSize: '0.75rem',
-                                  borderRadius: '4px',
-                                  border: '1px solid rgba(16, 185, 129, 0.4)',
-                                  background: intv.status?.includes('Yapıldı') ? '#10b981' : 'rgba(16, 185, 129, 0.15)',
-                                  color: intv.status?.includes('Yapıldı') ? 'white' : '#34d399',
-                                  cursor: 'pointer',
-                                  fontWeight: 500
-                                }}
-                                title="Yapıldı olarak işaretle"
-                              >
-                                ✅ Yapıldı
-                              </button>
-                              <button 
-                                type="button"
-                                onClick={() => handleQuickStatusUpdate(intv.id, 'Yapılmadı')}
-                                disabled={quickUpdatingId === intv.id}
-                                style={{
-                                  padding: '0.25rem 0.5rem',
-                                  fontSize: '0.75rem',
-                                  borderRadius: '4px',
-                                  border: '1px solid rgba(239, 68, 68, 0.4)',
-                                  background: (!isUninspected(intv) && intv.status?.includes('Yapılmadı')) ? '#ef4444' : 'rgba(239, 68, 68, 0.15)',
-                                  color: (!isUninspected(intv) && intv.status?.includes('Yapılmadı')) ? 'white' : '#f87171',
-                                  cursor: 'pointer',
-                                  fontWeight: 500
-                                }}
-                                title="Yapılmadı olarak işaretle"
-                              >
-                                ❌ Yapılmadı
-                              </button>
-                              <button 
-                                type="button"
-                                onClick={() => handleQuickStatusUpdate(intv.id, 'Bekliyor')}
-                                disabled={quickUpdatingId === intv.id}
-                                style={{
-                                  padding: '0.25rem 0.5rem',
-                                  fontSize: '0.75rem',
-                                  borderRadius: '4px',
-                                  border: '1px solid rgba(245, 158, 11, 0.4)',
-                                  background: intv.status?.includes('Bekliyor') ? '#f59e0b' : 'rgba(245, 158, 11, 0.15)',
-                                  color: intv.status?.includes('Bekliyor') ? 'white' : '#fbbf24',
-                                  cursor: 'pointer',
-                                  fontWeight: 500
-                                }}
-                                title="Bekliyor olarak işaretle"
-                              >
-                                ⏳ Bekliyor
-                              </button>
+                              {isUninspected(intv) ? (
+                                <>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleQuickStatusUpdate(intv.id, 'Yapıldı', intv.description || 'Kontrol Edildi - Müdahale Gerekmiyor')}
+                                    disabled={quickUpdatingId === intv.id}
+                                    style={{
+                                      padding: '0.25rem 0.5rem',
+                                      fontSize: '0.75rem',
+                                      borderRadius: '4px',
+                                      border: '1px solid rgba(16, 185, 129, 0.4)',
+                                      background: 'rgba(16, 185, 129, 0.2)',
+                                      color: '#34d399',
+                                      cursor: 'pointer',
+                                      fontWeight: 600
+                                    }}
+                                    title="Sahada kontrol edildi, herhangi bir müdahale ihtiyacı yok"
+                                  >
+                                    ✅ Kontrol Edildi (Sorun Yok)
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleQuickStatusUpdate(intv.id, 'Yapılmadı')}
+                                    disabled={quickUpdatingId === intv.id}
+                                    style={{
+                                      padding: '0.25rem 0.5rem',
+                                      fontSize: '0.75rem',
+                                      borderRadius: '4px',
+                                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                                      background: 'rgba(239, 68, 68, 0.2)',
+                                      color: '#f87171',
+                                      cursor: 'pointer',
+                                      fontWeight: 600
+                                    }}
+                                    title="Müdahale ihtiyacı var ama henüz yapılmadı"
+                                  >
+                                    ❌ Müdahale Gerekli
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleQuickStatusUpdate(intv.id, 'Yapıldı')}
+                                    disabled={quickUpdatingId === intv.id}
+                                    style={{
+                                      padding: '0.25rem 0.5rem',
+                                      fontSize: '0.75rem',
+                                      borderRadius: '4px',
+                                      border: '1px solid rgba(16, 185, 129, 0.4)',
+                                      background: intv.status?.includes('Yapıldı') ? '#10b981' : 'rgba(16, 185, 129, 0.15)',
+                                      color: intv.status?.includes('Yapıldı') ? 'white' : '#34d399',
+                                      cursor: 'pointer',
+                                      fontWeight: 500
+                                    }}
+                                    title="Yapıldı olarak işaretle"
+                                  >
+                                    ✅ Yapıldı
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleQuickStatusUpdate(intv.id, 'Yapılmadı')}
+                                    disabled={quickUpdatingId === intv.id}
+                                    style={{
+                                      padding: '0.25rem 0.5rem',
+                                      fontSize: '0.75rem',
+                                      borderRadius: '4px',
+                                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                                      background: intv.status?.includes('Yapılmadı') ? '#ef4444' : 'rgba(239, 68, 68, 0.15)',
+                                      color: intv.status?.includes('Yapılmadı') ? 'white' : '#f87171',
+                                      cursor: 'pointer',
+                                      fontWeight: 500
+                                    }}
+                                    title="Yapılmadı olarak işaretle"
+                                  >
+                                    ❌ Yapılmadı
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
 

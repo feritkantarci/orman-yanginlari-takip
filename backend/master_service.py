@@ -101,15 +101,11 @@ def get_overall_intervention_status(status_str: str) -> str:
     elif any("KONTROL EDILMEDI" in p or "KONTROL_EDILMEDI" in p for p in parts):
         if any(p in ["YAPILDI", "TAMAMLANDI", "OK"] for p in parts):
             return "Yapıldı"
-        elif any(p == "BEKLIYOR" for p in parts):
-            return "Bekliyor"
-        elif any(p in ["YAPILMADI", "NOK"] for p in parts):
+        elif any(p in ["YAPILMADI", "NOK", "BEKLIYOR"] for p in parts):
             return "Yapılmadı"
         return "KONTROL EDİLMEDİ"
     elif all(p in ["YAPILDI", "TAMAMLANDI", "OK"] for p in parts):
         return "Yapıldı"
-    elif any(p == "BEKLIYOR" for p in parts):
-        return "Bekliyor"
     else:
         return "Yapılmadı"
 
@@ -183,11 +179,11 @@ def build_all_master_lines(db: Session, force_refresh: bool = False) -> List[Dic
 
         # Unit Counters
         unit_stats = {
-            "BAKIM S2": {"yapildi": 0, "yapilacak": 0, "bekliyor": 0, "kontrol_edilmedi": 0},
-            "BAKIM S3": {"yapildi": 0, "yapilacak": 0, "bekliyor": 0, "kontrol_edilmedi": 0},
-            "OPERASYON": {"yapildi": 0, "yapilacak": 0, "bekliyor": 0, "kontrol_edilmedi": 0},
-            "BELLİ DEĞİL": {"yapildi": 0, "yapilacak": 0, "bekliyor": 0, "kontrol_edilmedi": 0},
-            "YATIRIM": {"yapildi": 0, "yapilacak": 0, "bekliyor": 0, "kontrol_edilmedi": 0}
+            "BAKIM S2": {"yapildi": 0, "yapilacak": 0, "kontrol_edilmedi": 0},
+            "BAKIM S3": {"yapildi": 0, "yapilacak": 0, "kontrol_edilmedi": 0},
+            "OPERASYON": {"yapildi": 0, "yapilacak": 0, "kontrol_edilmedi": 0},
+            "BELLİ DEĞİL": {"yapildi": 0, "yapilacak": 0, "kontrol_edilmedi": 0},
+            "YATIRIM": {"yapildi": 0, "yapilacak": 0, "kontrol_edilmedi": 0}
         }
 
         varlik_sayilari = {
@@ -208,7 +204,7 @@ def build_all_master_lines(db: Session, force_refresh: bool = False) -> List[Dic
             cat = inv.category or "Ağaç Budama"
             desc = inv.description or ""
             raw_status = inv.status or "Yapılmadı"
-            std_status = get_overall_intervention_status(raw_status) # "Yapıldı", "Yapılmadı", "Bekliyor", "KONTROL EDİLMEDİ"
+            std_status = get_overall_intervention_status(raw_status) # "Yapıldı", "Yapılmadı", "KONTROL EDİLMEDİ"
             unit = getattr(inv, 'intervention_unit', None) or 'BELLİ DEĞİL'
             unit = unit.strip()
             if unit not in unit_stats:
@@ -232,8 +228,6 @@ def build_all_master_lines(db: Session, force_refresh: bool = False) -> List[Dic
             # Unit count
             if std_status == "Yapıldı":
                 unit_stats[unit]["yapildi"] += 1
-            elif std_status == "Bekliyor":
-                unit_stats[unit]["bekliyor"] += 1
             elif std_status == "KONTROL EDİLMEDİ":
                 unit_stats[unit]["kontrol_edilmedi"] += 1
             else:
@@ -268,26 +262,29 @@ def build_all_master_lines(db: Session, force_refresh: bool = False) -> List[Dic
                 "flag_request": getattr(inv, 'flag_request', 0)
             })
 
-        # Calculate Overall Son Durum and Kontrol Durumu
+        # 1. SAHA TESPİT (2 Elemanlı: KONTROL EDİLDİ / KONTROL EDİLMEDİ)
+        # Kural: Varlık sayısı 0 ise veya incelenmemiş varlık varsa -> KONTROL EDİLMEDİ
+        # Yalnızca varlık > 0 ve kontrol_bekleyen == 0 ise -> KONTROL EDİLDİ
+        if varlik_sayilari['toplam'] > 0 and varlik_sayilari['kontrol_bekleyen'] == 0:
+            saha_tespit = "KONTROL EDİLDİ"
+        else:
+            saha_tespit = "KONTROL EDİLMEDİ"
+
+        # 2. İŞ DURUMU (Herhangi bir varlıkta yapılmadı varsa -> YAPILMADI)
         total_nok = sum(c["nok"] for c in cat_stats.values())
         total_ok = sum(c["ok"] for c in cat_stats.values())
-        total_uninspected = sum(c["uninspected"] for c in cat_stats.values())
         
-        if total_ok > 0 and total_nok == 0 and total_uninspected == 0:
-            son_durum = "TAMAMLANDI"
-        elif total_nok > 0 or total_ok > 0:
-            son_durum = "YAPILMADI"
+        if saha_tespit == "KONTROL EDİLMEDİ":
+            is_durumu = "YAPILMADI"
+        elif total_nok > 0:
+            is_durumu = "YAPILMADI"
+        elif total_ok > 0 and total_nok == 0:
+            is_durumu = "TAMAMLANDI"
         else:
-            son_durum = "YAPILMADI"
+            is_durumu = "GEREK YOK"
 
-        if varlik_sayilari['toplam'] == 0:
-            kontrol_durumu = "VARLIK YOK"
-        elif varlik_sayilari['kontrol_edilen'] == 0:
-            kontrol_durumu = "KONTROL EDİLMEDİ"
-        elif varlik_sayilari['kontrol_bekleyen'] == 0:
-            kontrol_durumu = "KONTROL EDİLDİ"
-        else:
-            kontrol_durumu = "KISMİ KONTROL"
+        kontrol_durumu = saha_tespit
+        son_durum = is_durumu
 
         master_line = {
             "sira_no": line.sira_no,
@@ -302,7 +299,10 @@ def build_all_master_lines(db: Session, force_refresh: bool = False) -> List[Dic
             "planlanan_bakim_tarihi": str(line.planlanan_bakim).split()[0] if line.planlanan_bakim else "",
             "gerceklesen_bakim_tarihi": str(line.gerceklesen_bakim).split()[0] if line.gerceklesen_bakim else "",
             "siparis_no": line.siparis_no or "",
+            "saha_tespit": saha_tespit,
+            "is_durumu": is_durumu,
             "kontrol_durumu": kontrol_durumu,
+            "son_durum": son_durum,
             
             # Categories OK/NOK
             "agac_budama_ok": cat_stats["Ağaç Budama"]["ok"],

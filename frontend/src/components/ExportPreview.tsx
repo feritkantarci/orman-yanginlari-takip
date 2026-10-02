@@ -80,12 +80,12 @@ export default function ExportPreview() {
   }, [data, selectedStatus, selectedUnitFilter, selectedUnitStatusFilter]);
 
   const computeUnitStats = () => {
-    const stats: Record<string, { yapildi: number; yapilacak: number; bekliyor: number }> = {
-      'BELLİ DEĞİL': { yapildi: 0, yapilacak: 0, bekliyor: 0 },
-      'BAKIM S2': { yapildi: 0, yapilacak: 0, bekliyor: 0 },
-      'BAKIM S3': { yapildi: 0, yapilacak: 0, bekliyor: 0 },
-      'OPERASYON': { yapildi: 0, yapilacak: 0, bekliyor: 0 },
-      'YATIRIM': { yapildi: 0, yapilacak: 0, bekliyor: 0 }
+    const stats: Record<string, { yapildi: number; yapilacak: number }> = {
+      'BELLİ DEĞİL': { yapildi: 0, yapilacak: 0 },
+      'BAKIM S2': { yapildi: 0, yapilacak: 0 },
+      'BAKIM S3': { yapildi: 0, yapilacak: 0 },
+      'OPERASYON': { yapildi: 0, yapilacak: 0 },
+      'YATIRIM': { yapildi: 0, yapilacak: 0 }
     };
 
     data.forEach(l => {
@@ -94,7 +94,6 @@ export default function ExportPreview() {
           if (stats[u]) {
             stats[u].yapildi += s.yapildi || 0;
             stats[u].yapilacak += s.yapilacak || 0;
-            stats[u].bekliyor += s.bekliyor || 0;
           }
         });
       } else if (l.intervention_units) {
@@ -104,7 +103,6 @@ export default function ExportPreview() {
           if (stats[u]) {
             const s = statuses[idx] || "Yapılmadı";
             if (s === "Yapıldı") stats[u].yapildi++;
-            else if (s === "Bekliyor") stats[u].bekliyor++;
             else stats[u].yapilacak++; // Yapılmadı
           }
         });
@@ -278,7 +276,7 @@ export default function ExportPreview() {
             </div>
             {unitStatusDropdownOpen && (
               <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#111827', border: '1px solid var(--border-color)', borderRadius: '4px', zIndex: 100, padding: '0.5rem', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
-                {['Yapıldı', 'Yapılmadı', 'Bekliyor'].map(val => (
+                {['Yapıldı', 'Yapılmadı'].map(val => (
                   <label key={val} style={{ display: 'flex', alignItems: 'center', padding: '0.4rem', cursor: 'pointer', margin: 0, borderRadius: '4px' }}
                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -306,13 +304,12 @@ export default function ExportPreview() {
                 <th style={{ textAlign: 'left', padding: '0.4rem', color: 'var(--text-muted)' }}>Müdahale Edecek Birim</th>
                 <th style={{ textAlign: 'center', padding: '0.4rem', color: '#10b981' }}>Yapıldı</th>
                 <th style={{ textAlign: 'center', padding: '0.4rem', color: '#ef4444' }}>Yapılmadı</th>
-                <th style={{ textAlign: 'center', padding: '0.4rem', color: '#f59e0b' }}>Bekliyor</th>
                 <th style={{ textAlign: 'center', padding: '0.4rem', color: 'var(--text-primary)', fontWeight: 'bold' }}>Toplam</th>
               </tr>
             </thead>
             <tbody>
               {Object.entries(computeUnitStats()).map(([unit, counts]) => {
-                const total = counts.yapildi + counts.yapilacak + counts.bekliyor;
+                const total = counts.yapildi + counts.yapilacak;
                 return (
                   <tr key={unit} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                     <td style={{ padding: '0.4rem', fontWeight: 600 }}>{unit}</td>
@@ -343,20 +340,6 @@ export default function ExportPreview() {
                       title={counts.yapilacak > 0 ? 'Yapılmadı kayıtlarını görmek için tıklayın' : undefined}
                     >
                       {counts.yapilacak}
-                    </td>
-                    <td 
-                      onClick={() => counts.bekliyor > 0 && setSelectedSummaryCell({ unit, status: 'Bekliyor' })}
-                      style={{ 
-                        textAlign: 'center', 
-                        padding: '0.4rem', 
-                        color: counts.bekliyor > 0 ? '#f59e0b' : 'var(--text-muted)', 
-                        fontWeight: counts.bekliyor > 0 ? 'bold' : 'normal',
-                        cursor: counts.bekliyor > 0 ? 'pointer' : 'default',
-                        textDecoration: counts.bekliyor > 0 ? 'underline' : 'none'
-                      }}
-                      title={counts.bekliyor > 0 ? 'Bekleyen kayıtları görmek için tıklayın' : undefined}
-                    >
-                      {counts.bekliyor}
                     </td>
                     <td 
                       onClick={() => total > 0 && setSelectedSummaryCell({ unit, status: 'Toplam' })}
@@ -407,7 +390,7 @@ export default function ExportPreview() {
               <th style={{ borderRight: "1px solid var(--border-color)", textAlign: "left" }}>Planlanan Bakım</th>
               <th style={{ borderRight: "1px solid var(--border-color)", textAlign: "left" }}>Gerçekleşen Bakım</th>
               <th style={{ borderRight: "1px solid var(--border-color)", textAlign: "left" }}>Sipariş No</th>
-              <th style={{ borderRight: "1px solid var(--border-color)", textAlign: "left" }}>Son Durum</th>
+              <th style={{ borderRight: "1px solid var(--border-color)", textAlign: "left", color: "var(--accent-color)" }}>İş Durumu</th>
               {/* Ağaç Budama */}
               <th style={{ color: "#10b981" }}>Yapılan</th>
               <th style={{ color: "#ef4444" }}>Yapılacak</th>

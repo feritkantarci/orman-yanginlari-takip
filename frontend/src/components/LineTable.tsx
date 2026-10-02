@@ -86,14 +86,14 @@ export default function LineTable() {
       filtered = filtered.filter(l => oms.includes(l.operasyon_merkezi));
     }
 
-    // Filter by Kontrol Durumu
+    // Filter by Saha Tespit
     if (inspectionFilter !== "Tümü") {
-      filtered = filtered.filter(l => (l.kontrol_durumu || "VARLIK YOK") === inspectionFilter);
+      filtered = filtered.filter(l => (l.saha_tespit || l.kontrol_durumu || "KONTROL EDİLMEDİ") === inspectionFilter);
     }
 
-    // Filter by Son Durum
+    // Filter by İş Durumu
     if (statusFilter !== "Tümü") {
-      filtered = filtered.filter(l => l.son_durum === statusFilter);
+      filtered = filtered.filter(l => (l.is_durumu || l.son_durum) === statusFilter);
     }
 
     // Filter by Müdahale Edecek Birim and Birim Durumu
@@ -288,7 +288,7 @@ export default function LineTable() {
           )}
         </td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>
-          {line.kontrol_durumu === 'KONTROL EDİLDİ' && (
+          {(line.saha_tespit === 'KONTROL EDİLDİ' || line.kontrol_durumu === 'KONTROL EDİLDİ') ? (
             <span style={{ 
               padding: '0.2rem 0.6rem', 
               borderRadius: '12px', 
@@ -300,21 +300,7 @@ export default function LineTable() {
             }}>
               🟢 KONTROL EDİLDİ
             </span>
-          )}
-          {line.kontrol_durumu === 'KISMİ KONTROL' && (
-            <span style={{ 
-              padding: '0.2rem 0.6rem', 
-              borderRadius: '12px', 
-              fontSize: '0.75rem',
-              fontWeight: 'bold',
-              background: 'rgba(245, 158, 11, 0.2)',
-              color: '#f59e0b',
-              border: '1px solid rgba(245, 158, 11, 0.4)'
-            }}>
-              🟡 KISMİ ({line.varlik_sayilari?.kontrol_edilen || 0}/{line.varlik_sayilari?.toplam || 0})
-            </span>
-          )}
-          {line.kontrol_durumu === 'KONTROL EDİLMEDİ' && (
+          ) : (
             <span style={{ 
               padding: '0.2rem 0.6rem', 
               borderRadius: '12px', 
@@ -324,11 +310,8 @@ export default function LineTable() {
               color: '#ef4444',
               border: '1px solid rgba(239, 68, 68, 0.4)'
             }}>
-              🔴 KONTROL EDİLMEDİ ({line.varlik_sayilari?.toplam || 0})
+              🔴 KONTROL EDİLMEDİ{line.varlik_sayilari?.toplam > 0 ? ` (${line.varlik_sayilari.toplam})` : ''}
             </span>
-          )}
-          {(!line.kontrol_durumu || line.kontrol_durumu === 'VARLIK YOK') && (
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>-</span>
           )}
         </td>
         <td style={{ padding: '1rem', fontSize: '0.85rem' }}>
@@ -348,16 +331,23 @@ export default function LineTable() {
           )}
         </td>
         <td style={{ padding: '1rem', fontSize: '0.9rem' }}>
-          <span style={{ 
-            padding: '0.2rem 0.6rem', 
-            borderRadius: '12px', 
-            fontSize: '0.8rem',
-            fontWeight: 'bold',
-            background: line.son_durum === 'TAMAMLANDI' ? 'rgba(16, 185, 129, 0.2)' : line.son_durum === 'YAPILMADI' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-            color: line.son_durum === 'TAMAMLANDI' ? '#10b981' : line.son_durum === 'YAPILMADI' ? '#ef4444' : 'var(--text-secondary)'
-          }}>
-            {line.son_durum}
-          </span>
+          {(() => {
+            const st = line.is_durumu || line.son_durum || 'YAPILMADI';
+            const isCompleted = st === 'TAMAMLANDI';
+            const isNoNeed = st === 'GEREK YOK';
+            return (
+              <span style={{ 
+                padding: '0.2rem 0.6rem', 
+                borderRadius: '12px', 
+                fontSize: '0.8rem',
+                fontWeight: 'bold',
+                background: isCompleted ? 'rgba(16, 185, 129, 0.2)' : isNoNeed ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.2)',
+                color: isCompleted ? '#10b981' : isNoNeed ? 'var(--text-secondary)' : '#ef4444'
+              }}>
+                {st}
+              </span>
+            );
+          })()}
         </td>
         <td onClick={(e) => handleCategoryClick(e, line, 'Ağaç Budama')} style={{ padding: '1rem', fontSize: '0.9rem', cursor: 'pointer' }}>
           <span style={{ color: line.agac_budama_ok > 0 ? '#10b981' : 'inherit', fontWeight: line.agac_budama_ok > 0 ? 'bold' : 'normal' }}>{line.agac_budama_ok} ok</span>{' | '}
@@ -444,7 +434,7 @@ export default function LineTable() {
           </div>
 
           <div>
-            <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', display: 'block' }}>Kontrol Durumu</label>
+            <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', display: 'block' }}>Saha Tespit</label>
             <select 
               value={selectedInspectionFilter} 
               onChange={(e) => setSelectedInspectionFilter(e.target.value)} 
@@ -452,14 +442,12 @@ export default function LineTable() {
             >
               <option value="Tümü">Tümü (Tüm Hatlar)</option>
               <option value="KONTROL EDİLDİ">🟢 Kontrol Edildi</option>
-              <option value="KISMİ KONTROL">🟡 Kısmi Kontrol</option>
               <option value="KONTROL EDİLMEDİ">🔴 Kontrol Edilmedi</option>
-              <option value="VARLIK YOK">⚪ Varlık Yok</option>
             </select>
           </div>
 
           <div>
-            <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', display: 'block' }}>Son Durum</label>
+            <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', display: 'block' }}>İş Durumu</label>
             <select 
               value={selectedStatus} 
               onChange={(e) => setSelectedStatus(e.target.value)} 
@@ -468,6 +456,7 @@ export default function LineTable() {
               <option value="Tümü">Tümü</option>
               <option value="TAMAMLANDI">TAMAMLANDI</option>
               <option value="YAPILMADI">YAPILMADI</option>
+              <option value="GEREK YOK">GEREK YOK</option>
             </select>
           </div>
 
@@ -553,9 +542,9 @@ export default function LineTable() {
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Planlanan Bakım</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Gerçekleşen Bakım</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Sipariş No</th>
-                  <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Kontrol Durumu</th>
+                  <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--accent-color)', fontWeight: 600 }}>Saha Tespit</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Varlıklar</th>
-                  <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Son Durum</th>
+                  <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>İş Durumu</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Ağaç Budama</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Güzergah Değişimi</th>
                   <th style={{ padding: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Beton Dökümü</th>
