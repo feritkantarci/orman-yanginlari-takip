@@ -730,35 +730,32 @@ def get_tender_extras(oms: str = None, db: Session = Depends(get_db)):
     if oms and oms != "Tümü":
         target_oms = [oms.upper()]
         
-    excel_map = get_ihale_excel_map()
-            
-    query = db.query(models.Intervention, models.Line).join(
-        models.Line, models.Intervention.sira_no == models.Line.sira_no
-    )
+    all_master = master_service.build_all_master_lines(db)
     
-    extra_koridor_km = 0.0
-    extra_budama_adet = 0
+    extra_budama_ae = 0
+    extra_koridor_ae = 0
     
-    for inv, line in query.all():
-        line_om = str(line.operasyon_merkezi).strip().upper()
-        if line_om not in target_oms:
+    for l in all_master:
+        om = str(l.get("operasyon_merkezi", "")).strip().upper()
+        if om not in target_oms:
             continue
             
-        line_hat = str(line.hat_ismi).strip().upper()
+        ihale_budama = l.get("ihale_budama", False)
+        ihale_koridor = l.get("ihale_koridor", False)
         
-        koridor_excel = excel_map.get((line_om, line_hat), {}).get("koridor", "YOK")
-        budama_excel = excel_map.get((line_om, line_hat), {}).get("budama", "YOK")
+        has_budama = (l.get("agac_budama_ok", 0) > 0 or l.get("agac_budama_nok", 0) > 0)
+        has_koridor = (l.get("koridor_acma_ok", 0) > 0 or l.get("koridor_acma_nok", 0) > 0)
         
-        if inv.category == "Koridor Açma":
-            if koridor_excel == "YOK" or koridor_excel == "":
-                extra_koridor_km += float(inv.length_km or 0)
-        elif inv.category == "Ağaç Budama":
-            if budama_excel == "YOK" or budama_excel == "":
-                extra_budama_adet += int(inv.quantity or 1)
-                
+        if has_budama and not ihale_budama:
+            extra_budama_ae += 1
+        if has_koridor and not ihale_koridor:
+            extra_koridor_ae += 1
+            
     return {
-        "extra_koridor_acma_km": round(extra_koridor_km, 2),
-        "extra_agac_budama_adet": extra_budama_adet
+        "extra_koridor_acma_ae": extra_koridor_ae,
+        "extra_agac_budama_ae": extra_budama_ae,
+        "extra_koridor_acma_km": extra_koridor_ae,
+        "extra_agac_budama_adet": extra_budama_ae
     }
 
 @app.put("/api/users/me/dashboard-preferences")

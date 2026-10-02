@@ -256,23 +256,27 @@ export default function SummaryView() {
       
       {/* Yönetici Özeti (Sabit Widget) */}
       {tenderExtras && (
-        <div style={{ marginBottom: '1rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: 'var(--radius-md)', padding: '0.2rem 0.6rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.8rem', justifyContent: 'space-between' }}>
+        <div style={{ marginBottom: '1rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: 'var(--radius-md)', padding: '0.4rem 0.8rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem', justifyContent: 'space-between' }}>
           <div style={{ flex: '1 1 300px' }}>
-            <h3 style={{ margin: 0, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+            <h3 style={{ margin: 0, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
               <span>🚨</span> İhale Kapsamına İlave İşler (Yönetici Özeti)
             </h3>
-            <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              Sadece Hatay Metropol, Kırıkhan ve Reyhanlı bölgesi için Excel ile eşleşmeyen ekstra iş kalemleri.
+            <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+              Sözleşme keşfinde yer almayıp sahada tespit yapılan Anahtarlama Elemanı sayıları (Hatay Metropol, Kırıkhan, Reyhanlı).
             </p>
           </div>
           <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
-            <div style={{ minWidth: '120px', background: 'var(--surface-color)', padding: '0.3rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--glass-border)', textAlign: 'center' }}>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.1rem' }}>Koridor Açma</span>
-              <strong style={{ fontSize: '1.2rem', color: 'var(--text-primary)' }}>{tenderExtras.extra_koridor_acma_km} Km</strong>
+            <div style={{ minWidth: '140px', background: 'var(--surface-color)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--glass-border)', textAlign: 'center' }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.1rem' }}>Koridor Açma</span>
+              <strong style={{ fontSize: '1.15rem', color: 'var(--text-primary)' }}>
+                {tenderExtras.extra_koridor_acma_ae ?? tenderExtras.extra_koridor_acma_km ?? 0} Anahtarlama Elemanı
+              </strong>
             </div>
-            <div style={{ minWidth: '120px', background: 'var(--surface-color)', padding: '0.3rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--glass-border)', textAlign: 'center' }}>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.1rem' }}>Ağaç Budama</span>
-              <strong style={{ fontSize: '1.2rem', color: 'var(--text-primary)' }}>{tenderExtras.extra_agac_budama_adet} Adet</strong>
+            <div style={{ minWidth: '140px', background: 'var(--surface-color)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--glass-border)', textAlign: 'center' }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.1rem' }}>Ağaç Budama</span>
+              <strong style={{ fontSize: '1.15rem', color: 'var(--text-primary)' }}>
+                {tenderExtras.extra_agac_budama_ae ?? tenderExtras.extra_agac_budama_adet ?? 0} Anahtarlama Elemanı
+              </strong>
             </div>
           </div>
         </div>
